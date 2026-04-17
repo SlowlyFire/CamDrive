@@ -32,9 +32,16 @@ export default function VehicleHistory() {
                 <p className="font-bold text-gray-700 mb-3">תיקיות Drive</p>
                 <div className="flex flex-col gap-2">
                   {data.vehicle.driveFolders.map((f, i) => (
-                    <div key={i} className="flex items-center justify-between text-sm">
-                      <span className="text-gray-700 font-mono text-xs">{f.folderName}</span>
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                    <div key={i} className="flex items-center justify-between gap-2 text-sm">
+                      <a
+                        href={`https://drive.google.com/drive/folders/${f.folderId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-700 font-mono text-xs underline truncate"
+                      >
+                        {f.folderName}
+                      </a>
+                      <span className={`shrink-0 text-xs font-bold px-2 py-0.5 rounded-full ${
                         f.type === 'enlistment' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
                       }`}>
                         {f.type === 'enlistment' ? 'גיוס' : 'שחרור'}

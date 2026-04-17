@@ -144,7 +144,18 @@ export default function InspectionDetail() {
         {/* Photos */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="font-bold text-gray-700 mb-3">תמונות ({inspection.photos.length})</p>
-          <PhotoGrid photos={inspection.photos} inspectionId={id} readOnly />
+          {inspection.status === 'approved' && inspection.driveFolderId ? (
+            <a
+              href={`https://drive.google.com/drive/folders/${inspection.driveFolderId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 w-full py-4 bg-blue-50 border-2 border-blue-200 rounded-xl text-blue-800 font-bold text-base active:bg-blue-100"
+            >
+              צפה בתמונות בדרייב 📂
+            </a>
+          ) : (
+            <PhotoGrid photos={inspection.photos} inspectionId={id} readOnly />
+          )}
         </div>
 
         {/* Actions */}

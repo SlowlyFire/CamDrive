@@ -5,6 +5,7 @@ const fs = require('fs');
 const archiver = require('archiver');
 const Inspection = require('../models/Inspection');
 const { requireAuth } = require('../middleware/auth');
+const { requireTeamCode } = require('../middleware/teamAuth');
 const { processApproval, getDriveClient } = require('../services/driveService');
 const router = express.Router();
 
@@ -62,7 +63,7 @@ function deleteInspectionFiles(inspectionId) {
 
 // POST /api/inspections — create new inspection
 // Body (multipart): photos[] + JSON fields in `data` field
-router.post('/', upload.array('photos'), async (req, res) => {
+router.post('/', requireTeamCode, upload.array('photos'), async (req, res) => {
   try {
     let data = {};
     if (req.body.data) {
@@ -120,7 +121,7 @@ router.get('/pending', requireAuth, async (req, res) => {
 });
 
 // GET /api/inspections/my/:personName — pending + rejected inspections for a person
-router.get('/my/:personName', async (req, res) => {
+router.get('/my/:personName', requireTeamCode, async (req, res) => {
   try {
     const name = decodeURIComponent(req.params.personName);
     const inspections = await Inspection.find({
@@ -194,7 +195,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // PUT /api/inspections/:id/photos — add more photos (pending or rejected)
-router.put('/:id/photos', upload.array('photos'), async (req, res) => {
+router.put('/:id/photos', requireTeamCode, upload.array('photos'), async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
@@ -218,7 +219,7 @@ router.put('/:id/photos', upload.array('photos'), async (req, res) => {
 });
 
 // DELETE /api/inspections/:id/photos/:photoFilename — delete one photo (pending or rejected)
-router.delete('/:id/photos/:photoFilename', async (req, res) => {
+router.delete('/:id/photos/:photoFilename', requireTeamCode, async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
@@ -379,7 +380,7 @@ router.get('/:id/download-zip', async (req, res) => {
 });
 
 // PUT /api/inspections/:id/resubmit — team resubmits a rejected inspection
-router.put('/:id/resubmit', async (req, res) => {
+router.put('/:id/resubmit', requireTeamCode, async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });

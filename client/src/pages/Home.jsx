@@ -4,7 +4,8 @@ export default function Home() {
   const navigate = useNavigate()
 
   function goTeam() {
-    navigate('/team')
+    const code = localStorage.getItem('teamCode')
+    navigate(code ? '/team' : '/team/login')
   }
 
   function goAdmin() {
