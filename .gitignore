@@ -4,6 +4,7 @@ node_modules/
 # ── Environment & secrets ─────────────────────────────────────────────────────
 .env
 .env.*
+!.env.example
 credentials.json
 
 # ── Uploaded files (runtime data, not source) ─────────────────────────────────
