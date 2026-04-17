@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+body {
+  font-family: 'Arial Hebrew', 'David', Arial, sans-serif;
+  background: #f8fafc;
+}
+
+#root {
+  min-height: 100svh;
+}
