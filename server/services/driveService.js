@@ -55,13 +55,23 @@ function indexToLetter(n) {
 
 /**
  * Return true if folderName is a legacy folder for the given plate.
- * Legacy = contains the plate number AND is not a new-format גיוס/שחרור folder.
- * Examples that match for plate "181900":
- *   "181900", "181900-A", "A 181900", "A-181900", "A - 181900"
+ * Legacy = contains the plate number as a standalone numeric token AND is not
+ * a new-format גיוס/שחרור folder.
+ *
+ * Uses a digit-boundary check so that plate "826" does NOT match folders for
+ * unrelated plates like "181826" or "8261" that happen to contain "826" as a
+ * substring.
+ *
+ * Examples that match for plate "826":
+ *   "826", "826-A", "A 826", "A-826", "A - 826 B"
+ * Examples that do NOT match for plate "826":
+ *   "181826-A", "8261-B", "826100"
  */
 function isLegacyFolder(folderName, plate) {
   if (folderName.startsWith('גיוס ') || folderName.startsWith('שחרור ')) return false;
-  return folderName.includes(plate);
+  // Plate must not be immediately preceded or followed by another digit
+  const regex = new RegExp(`(^|[^0-9])${plate}([^0-9]|$)`);
+  return regex.test(folderName);
 }
 
 /** Return true if folderName is a new-format enlistment folder for the plate */
