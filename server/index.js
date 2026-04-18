@@ -2,9 +2,12 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const helmet = require('helmet');
 const path = require('path');
 const fs = require('fs');
 
+const { initPasswordHashes } = require('./middleware/passwords');
+const { apiLimiter, authLimiter } = require('./middleware/rateLimiters');
 const authRoutes = require('./routes/auth');
 const peopleRoutes = require('./routes/people');
 const vehicleRoutes = require('./routes/vehicles');
@@ -23,16 +26,45 @@ const isProd = process.env.NODE_ENV === 'production';
 const UPLOADS_BASE = path.join(__dirname, 'uploads');
 fs.mkdirSync(UPLOADS_BASE, { recursive: true });
 
-// ── Middleware ─────────────────────────────────────────────────────────────
-// CORS is only needed in development (Vite dev server on a different port).
-// In production, Express serves everything from the same origin.
-if (!isProd) {
-  app.use(cors());
-}
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// ── Security headers (helmet) ──────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: isProd ? {
+    directives: {
+      defaultSrc:  ["'self'"],
+      scriptSrc:   ["'self'"],
+      styleSrc:    ["'self'", "'unsafe-inline'"], // Tailwind injects some inline styles
+      imgSrc:      ["'self'", 'data:', 'https://lh3.googleusercontent.com'],
+      connectSrc:  ["'self'"],
+      fontSrc:     ["'self'"],
+      objectSrc:   ["'none'"],
+      frameSrc:    ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  } : false, // Disable CSP in dev — Vite HMR needs relaxed rules
+  crossOriginEmbedderPolicy: false, // Keep off; required for Drive image loading
+}));
+
+// ── CORS ───────────────────────────────────────────────────────────────────
+// Production: only the deployed domain (or ALLOWED_ORIGIN override).
+// Development: allow Vite dev server on localhost:5173.
+const allowedOrigin = isProd
+  ? (process.env.ALLOWED_ORIGIN || 'https://camdrive-production.up.railway.app')
+  : 'http://localhost:5173';
+
+app.use(cors({
+  origin: allowedOrigin,
+  optionsSuccessStatus: 200,
+}));
+
+// ── Body parsing ───────────────────────────────────────────────────────────
+app.use(express.json({ limit: '1mb' })); // JSON bodies are small; photos go via multipart
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // ── API routes ─────────────────────────────────────────────────────────────
+app.use('/api', apiLimiter);
+app.use('/api/auth/login',      authLimiter);
+app.use('/api/auth/team-login', authLimiter);
+
 app.use('/api/auth', authRoutes);
 app.use('/api/people', peopleRoutes);
 app.use('/api/vehicle', vehicleRoutes);
@@ -45,22 +77,17 @@ app.get('/api/health', (req, res) => {
 });
 
 // ── Production static serving ──────────────────────────────────────────────
-// In production, Express serves the built React app from client/dist.
-// The Vite dev server (with its proxy) handles this in development.
 if (isProd) {
   const clientDist = path.join(__dirname, '../client/dist');
   app.use(express.static(clientDist));
-
-  // SPA fallback — any route not matched by the API serves index.html so
-  // React Router can handle client-side navigation.
   app.get('*', (req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }
 
-// ── Database ───────────────────────────────────────────────────────────────
-mongoose
-  .connect(process.env.MONGODB_URI)
+// ── Startup sequence ───────────────────────────────────────────────────────
+initPasswordHashes()
+  .then(() => mongoose.connect(process.env.MONGODB_URI))
   .then(() => {
     console.log('Connected to MongoDB');
     app.listen(PORT, () => {
@@ -68,7 +95,7 @@ mongoose
     });
   })
   .catch((err) => {
-    console.error('MongoDB connection error:', err);
+    console.error('Startup error:', err);
     process.exit(1);
   });
 

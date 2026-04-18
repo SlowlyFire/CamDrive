@@ -6,13 +6,24 @@ const archiver = require('archiver');
 const Inspection = require('../models/Inspection');
 const { requireAuth } = require('../middleware/auth');
 const { requireTeamCode } = require('../middleware/teamAuth');
+const { uploadLimiter } = require('../middleware/rateLimiters');
 const { processApproval, getDriveClient } = require('../services/driveService');
 const router = express.Router();
 
 const UPLOADS_BASE = path.join(__dirname, '../uploads');
 
 // ── Multer config ──────────────────────────────────────────────────────────
-// Files land in a temp directory first; moved to uploads/{inspectionId}/ after creation
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg', 'image/jpg', 'image/png',
+  'image/heic', 'image/heif', 'image/webp',
+  'video/mp4', 'video/quicktime',   // .mov
+  'video/x-msvideo',                // .avi
+  'video/x-matroska',               // .mkv
+]);
+
+const MAX_FILES = 200;
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+
 const tempStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const tmpDir = path.join(UPLOADS_BASE, '_tmp');
@@ -28,12 +39,41 @@ const tempStorage = multer.diskStorage({
 
 const upload = multer({
   storage: tempStorage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB per file
+  limits: { fileSize: MAX_FILE_SIZE, files: MAX_FILES },
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) cb(null, true);
-    else cb(new Error('קבצי תמונה בלבד'));
+    if (ALLOWED_MIME_TYPES.has(file.mimetype)) cb(null, true);
+    else cb(new Error('סוג קובץ לא נתמך — יש להעלות תמונה (jpeg, png, heic, webp) או סרטון (mp4, mov, avi, mkv)'));
   },
 });
+
+// ── Input validation ───────────────────────────────────────────────────────
+// Hebrew Unicode range: \u0590-\u05FF
+const PLATE_RE = /^[\w\u0590-\u05FF\s-]+$/;
+
+function sanitize(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/<[^>]*>/g, '').replace(/\0/g, '').trim();
+}
+
+function validateInspectionData(data) {
+  const errors = [];
+  const plate = sanitize(data.licensePlate || '');
+  if (!plate) {
+    errors.push('מספר רישוי הוא שדה חובה');
+  } else if (plate.length > 40) {
+    errors.push('מספר רישוי ארוך מדי (מקסימום 40 תווים)');
+  } else if (!PLATE_RE.test(plate)) {
+    errors.push('מספר רישוי מכיל תווים לא חוקיים');
+  }
+  if (data.notes        && sanitize(data.notes).length        > 2000) errors.push('הערות ארוכות מדי (מקסימום 2000 תווים)');
+  if (data.location     && sanitize(data.location).length     > 200)  errors.push('מיקום ארוך מדי (מקסימום 200 תווים)');
+  if (data.securityCode && sanitize(data.securityCode).length > 50)   errors.push('קוד מיגון ארוך מדי (מקסימום 50 תווים)');
+  if (data.vehicleHours != null) {
+    const h = Number(data.vehicleHours);
+    if (isNaN(h) || h < 0 || h > 200000) errors.push('שע״מ חייב להיות מספר בין 0 ל-200000');
+  }
+  return errors;
+}
 
 // Helper: move files from _tmp to uploads/{inspectionId}/
 function moveFilesToInspectionDir(files, inspectionId) {
@@ -63,7 +103,7 @@ function deleteInspectionFiles(inspectionId) {
 
 // POST /api/inspections — create new inspection
 // Body (multipart): photos[] + JSON fields in `data` field
-router.post('/', requireTeamCode, upload.array('photos'), async (req, res) => {
+router.post('/', requireTeamCode, uploadLimiter, upload.array('photos'), async (req, res) => {
   try {
     let data = {};
     if (req.body.data) {
@@ -72,23 +112,35 @@ router.post('/', requireTeamCode, upload.array('photos'), async (req, res) => {
       data = req.body;
     }
 
-    const { licensePlate, type, members, location, vehicleHours, notes, securityCode } = data;
-
-    if (!licensePlate || !type) {
-      return res.status(400).json({ error: 'מספר רישוי וסוג בחינה הם שדות חובה' });
+    // Validate
+    const validationErrors = validateInspectionData(data);
+    if (validationErrors.length > 0) {
+      return res.status(400).json({ error: validationErrors[0] });
     }
-    if (!['enlistment', 'release'].includes(type)) {
+    if (!data.type || !['enlistment', 'release'].includes(data.type)) {
       return res.status(400).json({ error: 'סוג בחינה לא תקין' });
     }
+
+    // Sanitize
+    const licensePlate  = sanitize(data.licensePlate);
+    const type          = data.type;
+    const location      = sanitize(data.location      || '');
+    const notes         = sanitize(data.notes         || '');
+    const securityCode  = sanitize(data.securityCode  || '');
+    const vehicleHours  = data.vehicleHours != null ? Number(data.vehicleHours) : null;
+    const rawMembers    = data.members;
+    const members       = (Array.isArray(rawMembers) ? rawMembers : rawMembers ? [rawMembers] : [])
+                            .map(sanitize)
+                            .filter((m) => m.length > 0 && m.length <= 50);
 
     const inspection = await Inspection.create({
       licensePlate,
       type,
-      members: Array.isArray(members) ? members : members ? [members] : [],
-      location: location || '',
-      vehicleHours: vehicleHours != null ? Number(vehicleHours) : null,
-      notes: notes || '',
-      securityCode: securityCode || '',
+      members,
+      location,
+      vehicleHours,
+      notes,
+      securityCode,
     });
 
     // Move uploaded files to the inspection's directory
@@ -195,7 +247,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // PUT /api/inspections/:id/photos — add more photos (pending or rejected)
-router.put('/:id/photos', requireTeamCode, upload.array('photos'), async (req, res) => {
+router.put('/:id/photos', requireTeamCode, uploadLimiter, upload.array('photos'), async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
@@ -305,10 +357,10 @@ router.post('/:id/reject', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'ניתן לדחות רק בחינות במצב ממתין' });
     }
 
-    const { reason } = req.body;
+    const reason = sanitize(req.body.reason || '').slice(0, 500);
     inspection.status = 'rejected';
     inspection.rejectedAt = new Date();
-    inspection.rejectionReason = reason || '';
+    inspection.rejectionReason = reason;
     await inspection.save();
 
     // Local files are intentionally kept — team members need to see photos
