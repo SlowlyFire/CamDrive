@@ -35,7 +35,7 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 
 const MAX_FILES = 200;
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 
 const tempStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -575,6 +575,23 @@ router.post('/:id/delete', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Multer error handler ───────────────────────────────────────────────────
+// Must be a 4-argument Express error middleware to catch multer errors before
+// they reach the default HTML error handler.
+// eslint-disable-next-line no-unused-vars
+router.use((err, req, res, next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ error: 'הקובץ גדול מדי — מקסימום 500MB לקובץ' });
+  }
+  if (err && err.code === 'LIMIT_FILE_COUNT') {
+    return res.status(413).json({ error: `יותר מדי קבצים — מקסימום ${MAX_FILES} קבצים` });
+  }
+  if (err && err.message) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
 });
 
 module.exports = router;

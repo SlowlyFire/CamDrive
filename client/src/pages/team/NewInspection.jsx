@@ -72,7 +72,7 @@ export default function NewInspection() {
       })
       setDone(true)
     } catch (err) {
-      setError(err.response?.data?.error || 'שגיאה בשליחה')
+      setError(err.response?.data?.error || err.message || 'שגיאה בשליחה')
       setSubmitting(false)
     }
   }

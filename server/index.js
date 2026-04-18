@@ -58,8 +58,10 @@ app.use(cors({
 }));
 
 // ── Body parsing ───────────────────────────────────────────────────────────
-app.use(express.json({ limit: '1mb' })); // JSON bodies are small; photos go via multipart
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+// JSON/urlencoded bodies are small (form fields only); video files go via
+// multipart and are handled by multer with its own 500 MB per-file limit.
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 // ── API routes ─────────────────────────────────────────────────────────────
 app.use('/api', apiLimiter);
@@ -91,9 +93,12 @@ initPasswordHashes()
   .then(() => mongoose.connect(process.env.MONGODB_URI))
   .then(() => {
     console.log('Connected to MongoDB');
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`CamDrive server running on port ${PORT} [${isProd ? 'production' : 'development'}]`);
     });
+    // Allow large video uploads — default Node.js socket timeout is 5 s on
+    // some hosts (e.g. Railway). 10 minutes gives 500 MB plenty of headroom.
+    server.setTimeout(10 * 60 * 1000);
   })
   .catch((err) => {
     console.error('Startup error:', err);
