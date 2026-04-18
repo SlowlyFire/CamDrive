@@ -5,14 +5,19 @@ export default function PhotoUploader({ onFilesReady, disabled = false }) {
   const cameraRef = useRef()
   const galleryRef = useRef()
   const [processing, setProcessing] = useState(false)
+  const [error, setError] = useState(null)
 
   async function handleChange(e) {
     const files = Array.from(e.target.files)
     if (!files.length) return
     setProcessing(true)
+    setError(null)
     try {
       const compressed = await Promise.all(files.map((f) => compressImage(f)))
       onFilesReady(compressed)
+    } catch (err) {
+      console.error('Image compression failed:', err)
+      setError('שגיאה בעיבוד התמונות — נסה שנית')
     } finally {
       setProcessing(false)
       e.target.value = ''
@@ -20,7 +25,11 @@ export default function PhotoUploader({ onFilesReady, disabled = false }) {
   }
 
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-col gap-2">
+      {error && (
+        <p className="text-red-600 text-sm text-center">{error}</p>
+      )}
+      <div className="flex gap-2">
       {/* Camera — opens rear camera directly */}
       <input
         ref={cameraRef}
@@ -58,6 +67,7 @@ export default function PhotoUploader({ onFilesReady, disabled = false }) {
       >
         {processing ? 'מעבד…' : '🖼️ גלריה'}
       </button>
+      </div>
     </div>
   )
 }

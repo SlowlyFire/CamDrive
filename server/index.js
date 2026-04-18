@@ -33,7 +33,7 @@ app.use(helmet({
       defaultSrc:  ["'self'"],
       scriptSrc:   ["'self'"],
       styleSrc:    ["'self'", "'unsafe-inline'"], // Tailwind injects some inline styles
-      imgSrc:      ["'self'", 'data:', 'https://lh3.googleusercontent.com'],
+      imgSrc:      ["'self'", 'data:', 'blob:', 'https://lh3.googleusercontent.com'],
       connectSrc:  ["'self'"],
       fontSrc:     ["'self'"],
       objectSrc:   ["'none'"],
