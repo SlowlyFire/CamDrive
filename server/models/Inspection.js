@@ -59,12 +59,21 @@ const inspectionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'approved', 'rejected', 'deleted'],
+    enum: ['pending', 'approved', 'partially_approved', 'rejected', 'deleted'],
     default: 'pending',
   },
   driveFolderId: {
     type: String,
     default: null,
+  },
+  failedUploads: {
+    type: [{
+      filename:     { type: String, required: true },
+      originalName: { type: String, default: '' },
+      error:        { type: String, default: '' },
+    }],
+    default: [],
+    _id: false,
   },
   photos: [photoSchema],
   shareToken: {

@@ -29,6 +29,9 @@ export default function InspectionCard({ inspection, linkTo }) {
         {inspection.location && <span>📍 {inspection.location}</span>}
         {inspection.vehicleHours != null && <span>⏱ {inspection.vehicleHours} שע״מ</span>}
         <span>🖼 {inspection.photos?.length || 0} תמונות</span>
+        {inspection.status === 'partially_approved' && inspection.failedUploads?.length > 0 && (
+          <span className="text-orange-600 font-bold">⚠️ {inspection.failedUploads.length} קבצים לא הועלו</span>
+        )}
       </div>
     </div>
   )

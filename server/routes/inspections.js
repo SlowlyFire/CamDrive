@@ -178,10 +178,12 @@ router.post('/', requireTeamCode, uploadLimiter, upload.array('photos'), async (
   }
 });
 
-// GET /api/inspections/pending — all pending inspections (manager)
+// GET /api/inspections/pending — pending + partially_approved (manager)
 router.get('/pending', requireAuth, async (req, res) => {
   try {
-    const inspections = await Inspection.find({ status: 'pending' }).sort({ createdAt: -1 });
+    const inspections = await Inspection.find({
+      status: { $in: ['pending', 'partially_approved'] },
+    }).sort({ createdAt: -1 });
     res.json(inspections);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -224,11 +226,8 @@ router.get('/:id/photos/:filename', async (req, res) => {
     const photo = inspection.photos.find((p) => p.filename === req.params.filename);
     if (!photo) return res.status(404).json({ error: 'תמונה לא נמצאה' });
 
-    if (inspection.status === 'approved') {
-      // Serve from Drive
-      if (!photo.driveFileId) {
-        return res.status(404).json({ error: 'קובץ לא נמצא ב-Drive' });
-      }
+    if (photo.driveFileId) {
+      // Serve from Drive — works for approved and partially_approved
       const drive = getDriveClient();
       const driveRes = await drive.files.get(
         { fileId: photo.driveFileId, alt: 'media' },
@@ -238,7 +237,7 @@ router.get('/:id/photos/:filename', async (req, res) => {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       driveRes.data.pipe(res);
     } else {
-      // Serve from local disk
+      // Serve from local disk — pending, rejected, or partially_approved (failed files)
       const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), photo.filename);
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'קובץ לא נמצא' });
@@ -332,7 +331,7 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
       console.error('Failed photo uploads:', failedUploads);
     }
 
-    // Save Drive file IDs back onto each photo record
+    // Save Drive file IDs back onto each successfully uploaded photo
     for (const result of uploadResults) {
       if (result.success) {
         const photo = inspection.photos.find((p) => p.filename === result.filename);
@@ -340,15 +339,32 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
       }
     }
 
-    // Update inspection status
-    inspection.status = 'approved';
-    inspection.approvedAt = new Date();
+    // Delete only the successfully uploaded local files
+    for (const result of uploadResults.filter((r) => r.success)) {
+      const localPath = path.join(UPLOADS_BASE, inspection._id.toString(), result.filename);
+      fs.unlink(localPath, () => {});
+    }
+
     inspection.vehicleId = vehicle._id;
     inspection.driveFolderId = folderId;
-    await inspection.save();
+    inspection.approvedAt = new Date();
 
-    // Delete local files after successful upload
-    deleteInspectionFiles(inspection._id);
+    if (failedUploads.length === 0) {
+      // All uploaded — fully approved
+      inspection.status = 'approved';
+      inspection.failedUploads = [];
+      deleteInspectionFiles(inspection._id); // clean up any stragglers
+    } else {
+      // Some failed — partially approved; keep failed files on disk
+      inspection.status = 'partially_approved';
+      inspection.failedUploads = failedUploads.map((r) => ({
+        filename: r.filename,
+        originalName: inspection.photos.find((p) => p.filename === r.filename)?.originalName || r.filename,
+        error: r.error || 'שגיאה לא ידועה',
+      }));
+    }
+
+    await inspection.save();
 
     res.json({
       success: true,
@@ -361,6 +377,92 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Approval error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/inspections/:id/retry-uploads — re-upload only the failed files
+router.post('/:id/retry-uploads', requireAuth, async (req, res) => {
+  try {
+    const inspection = await Inspection.findById(req.params.id);
+    if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
+    if (inspection.status !== 'partially_approved') {
+      return res.status(400).json({ error: 'ניתן לנסות שוב רק בחינות שאושרו חלקית' });
+    }
+    if (!inspection.driveFolderId) {
+      return res.status(400).json({ error: 'תיקיית Drive לא נמצאה' });
+    }
+
+    // Collect the photo objects for the failed files
+    const failedFilenames = new Set(inspection.failedUploads.map((f) => f.filename));
+    const photosToRetry = inspection.photos.filter((p) => failedFilenames.has(p.filename));
+
+    const localDir = path.join(UPLOADS_BASE, inspection._id.toString());
+    const { uploadPhotosBatch } = require('../services/driveService');
+    const results = await uploadPhotosBatch(photosToRetry, localDir, inspection.driveFolderId);
+
+    // Update driveFileIds and delete successful local files
+    for (const result of results) {
+      if (result.success) {
+        const photo = inspection.photos.find((p) => p.filename === result.filename);
+        if (photo) photo.driveFileId = result.driveFileId;
+        const localPath = path.join(localDir, result.filename);
+        fs.unlink(localPath, () => {});
+      }
+    }
+
+    const stillFailed = results.filter((r) => !r.success);
+
+    if (stillFailed.length === 0) {
+      inspection.status = 'approved';
+      inspection.failedUploads = [];
+      deleteInspectionFiles(inspection._id);
+    } else {
+      inspection.failedUploads = stillFailed.map((r) => ({
+        filename: r.filename,
+        originalName: inspection.photos.find((p) => p.filename === r.filename)?.originalName || r.filename,
+        error: r.error || 'שגיאה לא ידועה',
+      }));
+    }
+
+    await inspection.save();
+
+    res.json({ success: true, inspection, retryResults: results });
+  } catch (err) {
+    console.error('Retry upload error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/inspections/:id/download-failed-zip — ZIP of only the failed files
+router.get('/:id/download-failed-zip', requireAuth, async (req, res) => {
+  try {
+    const inspection = await Inspection.findById(req.params.id);
+    if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
+    if (!inspection.failedUploads || inspection.failedUploads.length === 0) {
+      return res.status(400).json({ error: 'אין קבצים שנכשלו' });
+    }
+
+    const zipName = `failed-${inspection.licensePlate}-${inspection._id}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+    const archive = archiver('zip', { zlib: { level: 5 } });
+    archive.on('error', (err) => { throw err; });
+    archive.pipe(res);
+
+    const inspDir = path.join(UPLOADS_BASE, inspection._id.toString());
+    for (const failed of inspection.failedUploads) {
+      const photo = inspection.photos.find((p) => p.filename === failed.filename);
+      const archiveName = photo?.originalName || failed.filename;
+      const filePath = path.join(inspDir, failed.filename);
+      if (fs.existsSync(filePath)) {
+        archive.file(filePath, { name: archiveName });
+      }
+    }
+
+    await archive.finalize();
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
 
@@ -406,32 +508,19 @@ router.get('/:id/download-zip', async (req, res) => {
     archive.on('error', (err) => { throw err; });
     archive.pipe(res);
 
-    if (inspection.status === 'approved') {
-      // Files are on Drive — stream each file from Drive API
-      if (!inspection.driveFolderId) {
-        return res.status(404).json({ error: 'תיקיית Drive לא נמצאה' });
-      }
-      const drive = getDriveClient();
-      const listRes = await drive.files.list({
-        q: `'${inspection.driveFolderId}' in parents and trashed = false`,
-        fields: 'files(id, name)',
-        pageSize: 1000,
-      });
-      const driveFiles = listRes.data.files || [];
-      for (const driveFile of driveFiles) {
+    // Use driveFileId per photo as source of truth — works for approved,
+    // partially_approved, pending, and rejected in one pass.
+    const drive = getDriveClient();
+    const inspDir = path.join(UPLOADS_BASE, inspection._id.toString());
+
+    for (const photo of inspection.photos) {
+      if (photo.driveFileId) {
         const streamRes = await drive.files.get(
-          { fileId: driveFile.id, alt: 'media' },
+          { fileId: photo.driveFileId, alt: 'media' },
           { responseType: 'stream' }
         );
-        archive.append(streamRes.data, { name: driveFile.name });
-      }
-    } else {
-      // Files are on local disk (pending / rejected)
-      const inspDir = path.join(UPLOADS_BASE, inspection._id.toString());
-      if (!fs.existsSync(inspDir)) {
-        return res.status(404).json({ error: 'קבצי התמונות לא נמצאו בשרת' });
-      }
-      for (const photo of inspection.photos) {
+        archive.append(streamRes.data, { name: photo.originalName || photo.filename });
+      } else {
         const filePath = path.join(inspDir, photo.filename);
         if (fs.existsSync(filePath)) {
           archive.file(filePath, { name: photo.originalName || photo.filename });

@@ -34,6 +34,11 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
                   playsInline
                 />
                 <span className="absolute text-white text-3xl pointer-events-none drop-shadow">▶</span>
+                {photo.filename.toLowerCase().endsWith('.mov') && (
+                  <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-xs text-center py-0.5 leading-tight">
+                    יש להוריד לצפייה
+                  </span>
+                )}
               </div>
             ) : (
               <img

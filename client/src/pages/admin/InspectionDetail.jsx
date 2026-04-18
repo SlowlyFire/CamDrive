@@ -15,7 +15,8 @@ export default function InspectionDetail() {
   const [actionLoading, setActionLoading] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showRejectForm, setShowRejectForm] = useState(false)
-  const [result, setResult] = useState(null) // { type: 'approved'|'rejected', folderName? }
+  const [result, setResult] = useState(null) // { type: 'approved'|'partially_approved'|'rejected', folderName? }
+  const [retrying, setRetrying] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [error, setError] = useState('')
 
@@ -32,13 +33,37 @@ export default function InspectionDetail() {
     setError('')
     try {
       const r = await api.post(`/inspections/${id}/approve`)
-      setResult({ type: 'approved', folderName: r.data.driveFolderName })
-      setInspection((i) => ({ ...i, status: 'approved' }))
+      const status = r.data.inspection?.status || 'approved'
+      setResult({ type: status, folderName: r.data.driveFolderName })
+      setInspection(r.data.inspection)
     } catch (err) {
       setError(err.response?.data?.error || 'שגיאה באישור')
     } finally {
       setActionLoading(false)
     }
+  }
+
+  async function retryUploads() {
+    setRetrying(true)
+    setError('')
+    try {
+      const r = await api.post(`/inspections/${id}/retry-uploads`)
+      setInspection(r.data.inspection)
+      if (r.data.inspection.status === 'approved') {
+        setResult({ type: 'approved', folderName: null })
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || 'שגיאה בניסיון חוזר')
+    } finally {
+      setRetrying(false)
+    }
+  }
+
+  function downloadFailedZip() {
+    const a = document.createElement('a')
+    a.href = `/api/inspections/${id}/download-failed-zip`
+    a.download = `failed-${inspection.licensePlate}.zip`
+    a.click()
   }
 
   async function reject() {
@@ -98,6 +123,7 @@ export default function InspectionDetail() {
 
   const typeLabel = inspection.type === 'enlistment' ? 'גיוס' : 'שחרור'
   const isPending = inspection.status === 'pending'
+  const isPartiallyApproved = inspection.status === 'partially_approved'
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col" dir="rtl">
@@ -112,6 +138,12 @@ export default function InspectionDetail() {
             {result.folderName && (
               <p className="text-green-700 text-sm mt-1">📁 {result.folderName}</p>
             )}
+          </div>
+        )}
+        {result?.type === 'partially_approved' && (
+          <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-4">
+            <p className="text-orange-800 font-bold">⚠️ אושר חלקית — חלק מהקבצים לא הועלו</p>
+            <p className="text-orange-700 text-sm mt-1">ראה פירוט בהמשך</p>
           </div>
         )}
         {result?.type === 'rejected' && (
@@ -154,9 +186,54 @@ export default function InspectionDetail() {
               צפה בתמונות בדרייב 📂
             </a>
           ) : (
-            <PhotoGrid photos={inspection.photos} inspectionId={id} readOnly />
+            <>
+              <PhotoGrid photos={inspection.photos} inspectionId={id} readOnly />
+              {inspection.status === 'partially_approved' && inspection.driveFolderId && (
+                <a
+                  href={`https://drive.google.com/drive/folders/${inspection.driveFolderId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 w-full mt-3 py-3 bg-blue-50 border-2 border-blue-200 rounded-xl text-blue-800 font-bold text-sm active:bg-blue-100"
+                >
+                  צפה בקבצים שהועלו בדרייב 📂
+                </a>
+              )}
+            </>
           )}
         </div>
+
+        {/* Partially approved — failed uploads warning + actions */}
+        {isPartiallyApproved && inspection.failedUploads?.length > 0 && (
+          <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-4 flex flex-col gap-3">
+            <p className="font-black text-orange-800">
+              ⚠️ {inspection.failedUploads.length} קבצים לא הועלו לדרייב
+            </p>
+            <ul className="text-sm text-orange-700 flex flex-col gap-1">
+              {inspection.failedUploads.map((f) => (
+                <li key={f.filename} className="font-mono truncate">
+                  • {f.originalName || f.filename}
+                  {f.error && <span className="text-orange-500 text-xs"> — {f.error}</span>}
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-2">
+              <button
+                onClick={retryUploads}
+                disabled={retrying}
+                className="flex-1 py-3 bg-orange-600 text-white font-bold rounded-xl disabled:opacity-50 text-sm"
+              >
+                {retrying ? '…' : '🔄 נסה שוב'}
+              </button>
+              <button
+                onClick={downloadFailedZip}
+                className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm"
+              >
+                📥 הורד קבצים שנכשלו
+              </button>
+            </div>
+            {error && <p className="text-red-600 text-sm">{error}</p>}
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex gap-2">
@@ -166,7 +243,7 @@ export default function InspectionDetail() {
           >
             🔗 שתף
           </button>
-          {inspection.status === 'approved' && (
+          {(inspection.status === 'approved' || inspection.status === 'partially_approved') && (
             <button
               onClick={downloadZip}
               className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm"
@@ -207,7 +284,7 @@ export default function InspectionDetail() {
 
         {isPending && !result && (
           <>
-            {error && <p className="text-red-600 text-sm">{error}</p>}
+            {error && !isPartiallyApproved && <p className="text-red-600 text-sm">{error}</p>}
 
             {!showRejectForm ? (
               <div className="flex flex-col gap-3">

@@ -4,6 +4,19 @@ const path = require('path');
 
 const DRIVE_ROOT_FOLDER_ID = process.env.DRIVE_ROOT_FOLDER_ID;
 
+// ── MIME lookup ────────────────────────────────────────────────────────────
+const UPLOAD_MIME = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.webp': 'image/webp', '.heic': 'image/heic', '.heif': 'image/heif',
+  '.mp4': 'video/mp4', '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo', '.mkv': 'video/x-matroska',
+};
+
+function mimeForUpload(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  return UPLOAD_MIME[ext] || 'application/octet-stream';
+}
+
 // ── Auth ───────────────────────────────────────────────────────────────────
 // Uses OAuth2 with a long-lived refresh token.
 // Required env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN
@@ -149,7 +162,7 @@ async function uploadFile(localPath, filename, folderId) {
       parents: [folderId],
     },
     media: {
-      mimeType: 'image/jpeg',
+      mimeType: mimeForUpload(filename),
       body: fs.createReadStream(localPath),
     },
     fields: 'id',
