@@ -1,5 +1,13 @@
 import { useState } from 'react'
 
+const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.webm'])
+
+function isVideoFilename(filename) {
+  if (!filename) return false
+  const ext = '.' + filename.split('.').pop().toLowerCase()
+  return VIDEO_EXTS.has(ext)
+}
+
 export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = false }) {
   const [lightbox, setLightbox] = useState(null)
 
@@ -7,18 +15,35 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
     return <p className="text-gray-400 text-sm text-center py-4">אין תמונות</p>
   }
 
+  const url = (filename) => `/api/inspections/${inspectionId}/photos/${filename}`
+
   return (
     <>
       <div className="grid grid-cols-3 gap-1">
         {photos.map((photo, i) => (
           <div key={photo.filename} className="relative aspect-square bg-gray-100">
-            <img
-              src={`/api/inspections/${inspectionId}/photos/${photo.filename}`}
-              alt={photo.originalName}
-              className="w-full h-full object-cover cursor-pointer"
-              onClick={() => setLightbox(i)}
-              loading="lazy"
-            />
+            {isVideoFilename(photo.filename) ? (
+              <div
+                className="w-full h-full flex items-center justify-center bg-gray-800 cursor-pointer"
+                onClick={() => setLightbox(i)}
+              >
+                <video
+                  src={url(photo.filename)}
+                  className="w-full h-full object-cover"
+                  muted
+                  playsInline
+                />
+                <span className="absolute text-white text-3xl pointer-events-none drop-shadow">▶</span>
+              </div>
+            ) : (
+              <img
+                src={url(photo.filename)}
+                alt={photo.originalName}
+                className="w-full h-full object-cover cursor-pointer"
+                onClick={() => setLightbox(i)}
+                loading="lazy"
+              />
+            )}
             {!readOnly && onDelete && (
               <button
                 onClick={(e) => { e.stopPropagation(); onDelete(photo.filename) }}
@@ -42,11 +67,24 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
             className="absolute right-4 text-white text-3xl px-4"
             onClick={(e) => { e.stopPropagation(); setLightbox((l) => Math.max(0, l - 1)) }}
           >›</button>
-          <img
-            src={`/api/inspections/${inspectionId}/photos/${photos[lightbox].filename}`}
-            className="max-h-screen max-w-screen object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
+
+          {isVideoFilename(photos[lightbox].filename) ? (
+            <video
+              key={photos[lightbox].filename}
+              src={url(photos[lightbox].filename)}
+              className="max-h-screen max-w-screen object-contain"
+              controls
+              autoPlay
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <img
+              src={url(photos[lightbox].filename)}
+              className="max-h-screen max-w-screen object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
+
           <button
             className="absolute left-4 text-white text-3xl px-4"
             onClick={(e) => { e.stopPropagation(); setLightbox((l) => Math.min(photos.length - 1, l + 1)) }}

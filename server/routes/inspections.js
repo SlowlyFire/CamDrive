@@ -12,6 +12,19 @@ const router = express.Router();
 
 const UPLOADS_BASE = path.join(__dirname, '../uploads');
 
+// ── MIME type lookup for serving files ────────────────────────────────────
+const MIME_BY_EXT = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.webp': 'image/webp', '.heic': 'image/heic', '.heif': 'image/heif',
+  '.mp4': 'video/mp4', '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo', '.mkv': 'video/x-matroska',
+};
+
+function mimeForFilename(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  return MIME_BY_EXT[ext] || 'application/octet-stream';
+}
+
 // ── Multer config ──────────────────────────────────────────────────────────
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg', 'image/jpg', 'image/png',
@@ -120,6 +133,9 @@ router.post('/', requireTeamCode, uploadLimiter, upload.array('photos'), async (
     if (!data.type || !['enlistment', 'release'].includes(data.type)) {
       return res.status(400).json({ error: 'סוג בחינה לא תקין' });
     }
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'נא להוסיף לפחות תמונה או סרטון אחד' });
+    }
 
     // Sanitize
     const licensePlate  = sanitize(data.licensePlate);
@@ -218,7 +234,7 @@ router.get('/:id/photos/:filename', async (req, res) => {
         { fileId: photo.driveFileId, alt: 'media' },
         { responseType: 'stream' }
       );
-      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Content-Type', mimeForFilename(photo.filename));
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       driveRes.data.pipe(res);
     } else {

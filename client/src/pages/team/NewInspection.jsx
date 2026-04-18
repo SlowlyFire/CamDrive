@@ -4,6 +4,7 @@ import api from '../../utils/api'
 import TopBar from '../../components/TopBar'
 import PhotoUploader from '../../components/PhotoUploader'
 import Spinner from '../../components/Spinner'
+import { isVideoFile } from '../../utils/imageUtils'
 
 export default function NewInspection() {
   const navigate = useNavigate()
@@ -200,15 +201,27 @@ export default function NewInspection() {
           />
         </div>
 
-        {/* Photos */}
+        {/* Photos & Videos */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-2">תמונות ({photos.length})</label>
+          <label className="block text-sm font-bold text-gray-700 mb-2">תמונות וסרטונים ({photos.length})</label>
           <PhotoUploader onFilesReady={addPhotos} disabled={submitting} />
           {photos.length > 0 && (
             <div className="grid grid-cols-4 gap-1 mt-2">
               {photos.map((p, i) => (
-                <div key={i} className="relative aspect-square">
-                  <img src={p.preview} className="w-full h-full object-cover rounded-lg" />
+                <div key={i} className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden">
+                  {isVideoFile(p.file) ? (
+                    <div className="w-full h-full flex items-center justify-center bg-gray-800">
+                      <video
+                        src={p.preview}
+                        className="w-full h-full object-cover"
+                        muted
+                        playsInline
+                      />
+                      <span className="absolute text-white text-2xl pointer-events-none">▶</span>
+                    </div>
+                  ) : (
+                    <img src={p.preview} className="w-full h-full object-cover" />
+                  )}
                   <button
                     type="button"
                     onClick={() => removePhoto(i)}

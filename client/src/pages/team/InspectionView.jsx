@@ -123,7 +123,7 @@ export default function InspectionView() {
 
         {/* Photos */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="font-bold text-gray-700 mb-3">תמונות ({inspection.photos.length})</p>
+          <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
           <PhotoGrid
             photos={inspection.photos}
             inspectionId={id}

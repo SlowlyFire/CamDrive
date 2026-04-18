@@ -1,3 +1,7 @@
+export function isVideoFile(file) {
+  return file.type.startsWith('video/')
+}
+
 /**
  * Compress an image File to max 1200px width at 80% JPEG quality.
  * Returns a new File object.
