@@ -8,6 +8,48 @@ function isVideoFilename(filename) {
   return VIDEO_EXTS.has(ext)
 }
 
+// Renders a video thumbnail: seeks to 1 s after metadata loads so the
+// browser paints a real frame instead of a black/blank poster.
+// Falls back to a camera-icon placeholder if the video fails to load.
+function VideoThumbnail({ src, filename, onClick }) {
+  const [failed, setFailed] = useState(false)
+  const isMov = filename?.toLowerCase().endsWith('.mov')
+
+  if (failed) {
+    return (
+      <div
+        className="w-full h-full flex flex-col items-center justify-center bg-gray-700 cursor-pointer gap-1 px-1"
+        onClick={onClick}
+      >
+        <span className="text-white text-2xl">📹</span>
+        <span className="text-white text-xs text-center leading-tight break-all line-clamp-2">
+          {filename}
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="w-full h-full flex items-center justify-center bg-gray-800 cursor-pointer" onClick={onClick}>
+      <video
+        src={src}
+        className="w-full h-full object-cover"
+        muted
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(e) => { e.target.currentTime = 1 }}
+        onError={() => setFailed(true)}
+      />
+      <span className="absolute text-white text-3xl pointer-events-none drop-shadow">▶</span>
+      {isMov && (
+        <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-xs text-center py-0.5 leading-tight">
+          יש להוריד לצפייה
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = false }) {
   const [lightbox, setLightbox] = useState(null)
 
@@ -23,23 +65,11 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
         {photos.map((photo, i) => (
           <div key={photo.filename} className="relative aspect-square bg-gray-100">
             {isVideoFilename(photo.filename) ? (
-              <div
-                className="w-full h-full flex items-center justify-center bg-gray-800 cursor-pointer"
+              <VideoThumbnail
+                src={url(photo.filename)}
+                filename={photo.originalName || photo.filename}
                 onClick={() => setLightbox(i)}
-              >
-                <video
-                  src={url(photo.filename)}
-                  className="w-full h-full object-cover"
-                  muted
-                  playsInline
-                />
-                <span className="absolute text-white text-3xl pointer-events-none drop-shadow">▶</span>
-                {photo.filename.toLowerCase().endsWith('.mov') && (
-                  <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-xs text-center py-0.5 leading-tight">
-                    יש להוריד לצפייה
-                  </span>
-                )}
-              </div>
+              />
             ) : (
               <img
                 src={url(photo.filename)}

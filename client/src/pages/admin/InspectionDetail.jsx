@@ -59,11 +59,18 @@ export default function InspectionDetail() {
     }
   }
 
-  function downloadFailedZip() {
-    const a = document.createElement('a')
-    a.href = `/api/inspections/${id}/download-failed-zip`
-    a.download = `failed-${inspection.licensePlate}.zip`
-    a.click()
+  async function downloadFailedZip() {
+    try {
+      const r = await api.get(`/inspections/${id}/download-failed-zip`, { responseType: 'blob' })
+      const url = URL.createObjectURL(r.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `failed-${inspection.licensePlate}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError('שגיאה בהורדת הקבצים')
+    }
   }
 
   async function reject() {
@@ -189,7 +196,7 @@ export default function InspectionDetail() {
         {(() => {
           const uploadedPhotos = inspection.photos.filter((p) => p.driveFileId)
           const failedPhotos   = inspection.photos.filter((p) => !p.driveFileId)
-          const hasSplitView   = (isPartiallyApproved || isUploading) && uploadedPhotos.length > 0
+          const hasSplitView   = isPartiallyApproved
 
           if (inspection.status === 'approved' && inspection.driveFolderId) {
             return (

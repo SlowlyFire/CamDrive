@@ -491,11 +491,15 @@ router.post('/:id/retry-uploads', requireAuth, async (req, res) => {
 });
 
 // GET /api/inspections/:id/download-failed-zip — ZIP of only the failed files
+// Uses photos without driveFileId as the authoritative list of failed files.
 router.get('/:id/download-failed-zip', requireAuth, async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
-    if (!inspection.failedUploads || inspection.failedUploads.length === 0) {
+
+    // Use per-photo driveFileId as source of truth — photos without it are the failed ones
+    const failedPhotos = inspection.photos.filter((p) => !p.driveFileId);
+    if (failedPhotos.length === 0) {
       return res.status(400).json({ error: 'אין קבצים שנכשלו' });
     }
 
@@ -508,10 +512,9 @@ router.get('/:id/download-failed-zip', requireAuth, async (req, res) => {
     archive.pipe(res);
 
     const inspDir = path.join(UPLOADS_BASE, inspection._id.toString());
-    for (const failed of inspection.failedUploads) {
-      const photo = inspection.photos.find((p) => p.filename === failed.filename);
-      const archiveName = photo?.originalName || failed.filename;
-      const filePath = path.join(inspDir, failed.filename);
+    for (const photo of failedPhotos) {
+      const archiveName = photo.originalName || photo.filename;
+      const filePath = path.join(inspDir, photo.filename);
       if (fs.existsSync(filePath)) {
         archive.file(filePath, { name: archiveName });
       }

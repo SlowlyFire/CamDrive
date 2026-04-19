@@ -6,6 +6,32 @@ import PhotoUploader from '../../components/PhotoUploader'
 import Spinner from '../../components/Spinner'
 import { isVideoFile } from '../../utils/imageUtils'
 
+function VideoPreview({ src, name }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-700 gap-1 px-1">
+        <span className="text-white text-xl">📹</span>
+        <span className="text-white text-xs text-center leading-tight break-all line-clamp-2">{name}</span>
+      </div>
+    )
+  }
+  return (
+    <div className="w-full h-full flex items-center justify-center bg-gray-800">
+      <video
+        src={src}
+        className="w-full h-full object-cover"
+        muted
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(e) => { e.target.currentTime = 1 }}
+        onError={() => setFailed(true)}
+      />
+      <span className="absolute text-white text-2xl pointer-events-none">▶</span>
+    </div>
+  )
+}
+
 export default function NewInspection() {
   const navigate = useNavigate()
   const myName = localStorage.getItem('myName')
@@ -210,15 +236,7 @@ export default function NewInspection() {
               {photos.map((p, i) => (
                 <div key={i} className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden">
                   {isVideoFile(p.file) ? (
-                    <div className="w-full h-full flex items-center justify-center bg-gray-800">
-                      <video
-                        src={p.preview}
-                        className="w-full h-full object-cover"
-                        muted
-                        playsInline
-                      />
-                      <span className="absolute text-white text-2xl pointer-events-none">▶</span>
-                    </div>
+                    <VideoPreview src={p.preview} name={p.file.name} />
                   ) : (
                     <img src={p.preview} className="w-full h-full object-cover" />
                   )}
