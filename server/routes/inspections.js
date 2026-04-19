@@ -7,7 +7,7 @@ const Inspection = require('../models/Inspection');
 const { requireAuth } = require('../middleware/auth');
 const { requireTeamCode } = require('../middleware/teamAuth');
 const { uploadLimiter } = require('../middleware/rateLimiters');
-const { processApproval, getDriveClient } = require('../services/driveService');
+const { prepareApprovalFolder, uploadPhotosBatch, getDriveClient } = require('../services/driveService');
 const router = express.Router();
 
 const UPLOADS_BASE = path.join(__dirname, '../uploads');
@@ -182,7 +182,7 @@ router.post('/', requireTeamCode, uploadLimiter, upload.array('photos'), async (
 router.get('/pending', requireAuth, async (req, res) => {
   try {
     const inspections = await Inspection.find({
-      status: { $in: ['pending', 'partially_approved'] },
+      status: { $in: ['pending', 'uploading', 'partially_approved'] },
     }).sort({ createdAt: -1 });
     res.json(inspections);
   } catch (err) {
@@ -311,76 +311,128 @@ router.delete('/:id/photos/:photoFilename', requireTeamCode, async (req, res) =>
   }
 });
 
-// POST /api/inspections/:id/approve — manager approves → Drive upload
+// POST /api/inspections/:id/approve — atomic 2-phase approval
+//
+// Phase 1  Create the Drive folder + upsert Vehicle (inside the approval
+//          lock), then immediately persist folderId + status='uploading' to
+//          the DB.  From this point a server crash is fully recoverable:
+//          the manager clicks Approve again and we resume from Phase 2.
+//
+// Phase 2  Upload only the photos that don't yet have a driveFileId.
+//          After every batch of 3 we save the newly acquired driveFileIds
+//          so a mid-upload crash loses at most 3 files' worth of progress.
+//
+// Phase 3  All driveFileIds present → status='approved', local files
+//          deleted.  Any still missing → status='partially_approved'.
+//
+// Idempotent: safe to call again after any kind of failure.
 router.post('/:id/approve', requireAuth, async (req, res) => {
+  let inspection;
   try {
-    const inspection = await Inspection.findById(req.params.id);
+    inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
-    if (inspection.status !== 'pending') {
+
+    // Allow both fresh approvals and resuming a crashed/interrupted upload
+    if (!['pending', 'uploading'].includes(inspection.status)) {
       return res.status(400).json({ error: 'ניתן לאשר רק בחינות במצב ממתין' });
     }
 
-    // Run Drive upload logic
-    const { vehicle, folderName, folderId, letter, uploadResults } = await processApproval(
-      inspection,
-      UPLOADS_BASE
-    );
+    let folderId = inspection.driveFolderId;
+    let folderName = null;
+    let letter = null;
 
-    const failedUploads = uploadResults.filter((r) => !r.success);
-    if (failedUploads.length > 0) {
-      console.error('Failed photo uploads:', failedUploads);
+    // ── Phase 1: Create Drive folder (skip if we already have one) ──────────
+    if (!folderId) {
+      const prep = await prepareApprovalFolder(inspection);
+      folderId    = prep.folderId;
+      folderName  = prep.folderName;
+      letter      = prep.letter;
+
+      // Persist the folder ID and transition to 'uploading' BEFORE we touch
+      // any local files.  If the server crashes after this save, the next
+      // approve call sees folderId set and skips straight to Phase 2.
+      inspection.status       = 'uploading';
+      inspection.driveFolderId = folderId;
+      inspection.vehicleId    = prep.vehicle._id;
+      if (!inspection.approvedAt) inspection.approvedAt = new Date();
+      await inspection.save();
     }
 
-    // Save Drive file IDs back onto each successfully uploaded photo
-    for (const result of uploadResults) {
-      if (result.success) {
-        const photo = inspection.photos.find((p) => p.filename === result.filename);
-        if (photo) photo.driveFileId = result.driveFileId;
+    const localDir = path.join(UPLOADS_BASE, inspection._id.toString());
+
+    // ── Phase 2: Upload only the photos that haven't reached Drive yet ──────
+    // photos[].driveFileId is the canonical source of truth.
+    const photosToUpload = inspection.photos.filter((p) => !p.driveFileId);
+
+    await uploadPhotosBatch(photosToUpload, localDir, folderId, 3, async (batchResults) => {
+      // Persist newly uploaded driveFileIds after every batch so a crash
+      // loses at most one batch (3 files) of progress.
+      let dirty = false;
+      for (const r of batchResults) {
+        if (r.success) {
+          const photo = inspection.photos.find((p) => p.filename === r.filename);
+          if (photo && !photo.driveFileId) {
+            photo.driveFileId = r.driveFileId;
+            dirty = true;
+          }
+        }
       }
-    }
+      if (dirty) {
+        try {
+          await inspection.save();
+        } catch (saveErr) {
+          // Non-fatal: upload continues. driveFileIds will be saved at end.
+          console.error('Progress save failed (non-fatal):', saveErr.message);
+        }
+      }
+    });
 
-    // Delete only the successfully uploaded local files
-    for (const result of uploadResults.filter((r) => r.success)) {
-      const localPath = path.join(UPLOADS_BASE, inspection._id.toString(), result.filename);
-      fs.unlink(localPath, () => {});
-    }
+    // ── Phase 3: Set final status ────────────────────────────────────────────
+    const stillMissing = inspection.photos.filter((p) => !p.driveFileId);
 
-    inspection.vehicleId = vehicle._id;
-    inspection.driveFolderId = folderId;
-    inspection.approvedAt = new Date();
-
-    if (failedUploads.length === 0) {
-      // All uploaded — fully approved
+    if (stillMissing.length === 0) {
       inspection.status = 'approved';
       inspection.failedUploads = [];
-      deleteInspectionFiles(inspection._id); // clean up any stragglers
+      await inspection.save();
+      deleteInspectionFiles(inspection._id);
     } else {
-      // Some failed — partially approved; keep failed files on disk
       inspection.status = 'partially_approved';
-      inspection.failedUploads = failedUploads.map((r) => ({
-        filename: r.filename,
-        originalName: inspection.photos.find((p) => p.filename === r.filename)?.originalName || r.filename,
-        error: r.error || 'שגיאה לא ידועה',
+      inspection.failedUploads = stillMissing.map((p) => ({
+        filename:     p.filename,
+        originalName: p.originalName || p.filename,
+        error:        'העלאה נכשלה',
       }));
+      // Delete successfully uploaded local files; keep the rest on disk
+      for (const photo of inspection.photos.filter((p) => p.driveFileId)) {
+        fs.unlink(path.join(localDir, photo.filename), () => {});
+      }
+      await inspection.save();
     }
-
-    await inspection.save();
 
     res.json({
       success: true,
       inspection,
       driveFolderName: folderName,
-      driveFolderId: folderId,
+      driveFolderId:   folderId,
       letter,
-      uploadResults,
     });
   } catch (err) {
     console.error('Approval error:', err);
+    // If we crashed before any upload succeeded (all driveFileIds still null),
+    // revert to 'pending' so the manager sees a clean retry state.
+    try {
+      if (inspection?.status === 'uploading' && inspection.photos.every((p) => !p.driveFileId)) {
+        inspection.status = 'pending';
+        await inspection.save();
+      }
+    } catch { /* ignore revert failure */ }
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/inspections/:id/retry-uploads — re-upload only the failed files
+// POST /api/inspections/:id/retry-uploads — re-upload missing files
+// Uses the same driveFileId-based skip logic as the approve endpoint so
+// it is safe to call multiple times without creating duplicates.
 router.post('/:id/retry-uploads', requireAuth, async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
@@ -392,41 +444,44 @@ router.post('/:id/retry-uploads', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'תיקיית Drive לא נמצאה' });
     }
 
-    // Collect the photo objects for the failed files
-    const failedFilenames = new Set(inspection.failedUploads.map((f) => f.filename));
-    const photosToRetry = inspection.photos.filter((p) => failedFilenames.has(p.filename));
-
+    // Photos without driveFileId are the ones that still need uploading
+    const photosToRetry = inspection.photos.filter((p) => !p.driveFileId);
     const localDir = path.join(UPLOADS_BASE, inspection._id.toString());
-    const { uploadPhotosBatch } = require('../services/driveService');
-    const results = await uploadPhotosBatch(photosToRetry, localDir, inspection.driveFolderId);
 
-    // Update driveFileIds and delete successful local files
-    for (const result of results) {
-      if (result.success) {
-        const photo = inspection.photos.find((p) => p.filename === result.filename);
-        if (photo) photo.driveFileId = result.driveFileId;
-        const localPath = path.join(localDir, result.filename);
-        fs.unlink(localPath, () => {});
+    await uploadPhotosBatch(photosToRetry, localDir, inspection.driveFolderId, 3, async (batchResults) => {
+      let dirty = false;
+      for (const r of batchResults) {
+        if (r.success) {
+          const photo = inspection.photos.find((p) => p.filename === r.filename);
+          if (photo && !photo.driveFileId) { photo.driveFileId = r.driveFileId; dirty = true; }
+        }
       }
-    }
+      if (dirty) {
+        try { await inspection.save(); } catch (e) { console.error('Progress save failed (non-fatal):', e.message); }
+      }
+    });
 
-    const stillFailed = results.filter((r) => !r.success);
+    const stillMissing = inspection.photos.filter((p) => !p.driveFileId);
 
-    if (stillFailed.length === 0) {
+    if (stillMissing.length === 0) {
       inspection.status = 'approved';
       inspection.failedUploads = [];
+      await inspection.save();
       deleteInspectionFiles(inspection._id);
     } else {
-      inspection.failedUploads = stillFailed.map((r) => ({
-        filename: r.filename,
-        originalName: inspection.photos.find((p) => p.filename === r.filename)?.originalName || r.filename,
-        error: r.error || 'שגיאה לא ידועה',
+      inspection.failedUploads = stillMissing.map((p) => ({
+        filename:     p.filename,
+        originalName: p.originalName || p.filename,
+        error:        'שגיאה לא ידועה',
       }));
+      // Delete successfully uploaded local files
+      for (const photo of inspection.photos.filter((p) => p.driveFileId)) {
+        fs.unlink(path.join(localDir, photo.filename), () => {});
+      }
+      await inspection.save();
     }
 
-    await inspection.save();
-
-    res.json({ success: true, inspection, retryResults: results });
+    res.json({ success: true, inspection });
   } catch (err) {
     console.error('Retry upload error:', err);
     res.status(500).json({ error: err.message });

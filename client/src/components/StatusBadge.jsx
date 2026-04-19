@@ -1,8 +1,9 @@
 const MAP = {
-  pending:            { label: 'ממתין',       cls: 'bg-yellow-100 text-yellow-800' },
-  approved:           { label: 'אושר',        cls: 'bg-green-100 text-green-800' },
-  partially_approved: { label: 'אושר חלקית', cls: 'bg-orange-100 text-orange-800' },
-  rejected:           { label: 'נדחה',        cls: 'bg-red-100 text-red-800' },
+  pending:            { label: 'ממתין',          cls: 'bg-yellow-100 text-yellow-800' },
+  uploading:          { label: 'מעלה לדרייב...', cls: 'bg-blue-100 text-blue-800' },
+  approved:           { label: 'אושר',           cls: 'bg-green-100 text-green-800' },
+  partially_approved: { label: 'אושר חלקית',    cls: 'bg-orange-100 text-orange-800' },
+  rejected:           { label: 'נדחה',           cls: 'bg-red-100 text-red-800' },
 }
 
 export default function StatusBadge({ status }) {

@@ -59,7 +59,7 @@ const inspectionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'approved', 'partially_approved', 'rejected', 'deleted'],
+    enum: ['pending', 'uploading', 'approved', 'partially_approved', 'rejected', 'deleted'],
     default: 'pending',
   },
   driveFolderId: {

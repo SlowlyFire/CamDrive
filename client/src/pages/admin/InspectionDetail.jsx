@@ -122,7 +122,8 @@ export default function InspectionDetail() {
   )
 
   const typeLabel = inspection.type === 'enlistment' ? 'גיוס' : 'שחרור'
-  const isPending = inspection.status === 'pending'
+  const isPending = inspection.status === 'pending' || inspection.status === 'uploading'
+  const isUploading = inspection.status === 'uploading'
   const isPartiallyApproved = inspection.status === 'partially_approved'
 
   return (
@@ -149,6 +150,17 @@ export default function InspectionDetail() {
         {result?.type === 'rejected' && (
           <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4">
             <p className="text-red-800 font-bold">❌ הבחינה נדחתה</p>
+          </div>
+        )}
+
+        {/* Interrupted upload banner — shown when a previous approval crashed mid-upload */}
+        {isUploading && !result && (
+          <div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-4">
+            <p className="text-blue-800 font-bold">⏫ ההעלאה לדרייב הופסקה</p>
+            <p className="text-blue-700 text-sm mt-1">
+              {inspection.photos.filter((p) => p.driveFileId).length} / {inspection.photos.length} קבצים הועלו.{' '}
+              לחץ על הכפתור למטה כדי לחדש — קבצים שכבר הועלו לא יועלו שוב.
+            </p>
           </div>
         )}
 
@@ -293,7 +305,7 @@ export default function InspectionDetail() {
                   disabled={actionLoading}
                   className="w-full py-4 bg-green-600 text-white font-black text-xl rounded-xl disabled:opacity-50"
                 >
-                  {actionLoading ? <Spinner size={5} /> : '✅ אשר ועלה ל-Drive'}
+                  {actionLoading ? <Spinner size={5} /> : isUploading ? '🔄 חדש העלאה לדרייב' : '✅ אשר ועלה ל-Drive'}
                 </button>
                 <button
                   onClick={() => setShowRejectForm(true)}

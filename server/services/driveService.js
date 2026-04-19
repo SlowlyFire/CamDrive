@@ -192,8 +192,13 @@ async function uploadFileWithRetry(localPath, filename, folderId, maxRetries = 3
 /**
  * Upload photos in batches of `concurrency`.
  * Returns [{ filename, driveFileId, success, error }]
+ *
+ * onBatchComplete(batchResults) — optional async callback called after each
+ * batch. Errors from the callback are logged but do NOT abort the upload.
+ * Use this to persist driveFileIds incrementally so a mid-upload crash
+ * leaves a recoverable state in the database.
  */
-async function uploadPhotosBatch(photos, localDir, folderId, concurrency = 3) {
+async function uploadPhotosBatch(photos, localDir, folderId, concurrency = 3, onBatchComplete = null) {
   const results = [];
   for (let i = 0; i < photos.length; i += concurrency) {
     const batch = photos.slice(i, i + concurrency);
@@ -213,6 +218,14 @@ async function uploadPhotosBatch(photos, localDir, folderId, concurrency = 3) {
       })
     );
     results.push(...batchResults);
+    if (onBatchComplete) {
+      try {
+        await onBatchComplete(batchResults);
+      } catch (cbErr) {
+        // Non-fatal — upload continues even if progress save fails
+        console.error('uploadPhotosBatch: onBatchComplete error (non-fatal):', cbErr.message);
+      }
+    }
   }
   return results;
 }
@@ -264,6 +277,41 @@ function determineNextLetter(plate, type, rootFolders) {
     const existingCount = rootFolders.filter((f) => isReleaseFolder(f.name, plate)).length;
     return indexToLetter(existingCount);
   }
+}
+
+/**
+ * prepareApprovalFolder — Phase 1 of the approval flow.
+ *
+ * Determines the next letter, creates the Drive folder, and upserts the
+ * Vehicle record — all inside the per-plate approval lock so concurrent
+ * approvals for the same plate never pick the same letter.
+ *
+ * Returns { vehicle, folderName, folderId, letter }
+ *
+ * Call this ONCE, save folderId to the inspection immediately, then upload
+ * files separately so a crash mid-upload doesn't lose the folder reference.
+ */
+async function prepareApprovalFolder(inspection) {
+  const { licensePlate, type } = inspection;
+
+  return withApprovalLock(licensePlate, type, async () => {
+    const Vehicle = require('../models/Vehicle');
+
+    const typeHebrew = type === 'enlistment' ? 'גיוס' : 'שחרור';
+    const dateStr = formatDate(new Date());
+
+    const rootFolders = await listRootFolders();
+    const letter = determineNextLetter(licensePlate, type, rootFolders);
+    const folderName = `${typeHebrew} ${licensePlate}-${letter} ${dateStr}`;
+    const { id: folderId } = await createFolder(folderName, DRIVE_ROOT_FOLDER_ID);
+
+    let vehicle = await Vehicle.findOne({ licensePlate });
+    if (!vehicle) vehicle = new Vehicle({ licensePlate });
+    vehicle.driveFolders.push({ folderId, folderName, type, createdAt: new Date() });
+    await vehicle.save();
+
+    return { vehicle, folderName, folderId, letter };
+  });
 }
 
 /**
@@ -321,6 +369,7 @@ module.exports = {
   uploadFile,
   uploadFileWithRetry,
   uploadPhotosBatch,
+  prepareApprovalFolder,
   listRootFolders,
   determineNextLetter,
   indexToLetter,
