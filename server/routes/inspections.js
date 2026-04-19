@@ -437,8 +437,10 @@ router.post('/:id/retry-uploads', requireAuth, async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
-    if (inspection.status !== 'partially_approved') {
-      return res.status(400).json({ error: 'ניתן לנסות שוב רק בחינות שאושרו חלקית' });
+    // Accept partially_approved AND uploading (crashed mid-upload) — both
+    // have a driveFolderId and some photos still missing from Drive.
+    if (!['partially_approved', 'uploading'].includes(inspection.status)) {
+      return res.status(400).json({ error: 'ניתן לנסות שוב רק בחינות שאושרו חלקית או שהעלאתן הופסקה' });
     }
     if (!inspection.driveFolderId) {
       return res.status(400).json({ error: 'תיקיית Drive לא נמצאה' });

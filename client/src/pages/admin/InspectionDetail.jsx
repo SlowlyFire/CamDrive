@@ -153,14 +153,11 @@ export default function InspectionDetail() {
           </div>
         )}
 
-        {/* Interrupted upload banner — shown when a previous approval crashed mid-upload */}
-        {isUploading && !result && (
+        {/* Interrupted upload note — only when nothing uploaded yet */}
+        {isUploading && !result && inspection.photos.every((p) => !p.driveFileId) && (
           <div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-4">
-            <p className="text-blue-800 font-bold">⏫ ההעלאה לדרייב הופסקה</p>
-            <p className="text-blue-700 text-sm mt-1">
-              {inspection.photos.filter((p) => p.driveFileId).length} / {inspection.photos.length} קבצים הועלו.{' '}
-              לחץ על הכפתור למטה כדי לחדש — קבצים שכבר הועלו לא יועלו שוב.
-            </p>
+            <p className="text-blue-800 font-bold">⏫ ההעלאה לדרייב הופסקה לפני שהחלה</p>
+            <p className="text-blue-700 text-sm mt-1">לחץ על "חדש העלאה" למטה כדי להעלות מחדש.</p>
           </div>
         )}
 
@@ -185,67 +182,89 @@ export default function InspectionDetail() {
           )}
         </div>
 
-        {/* Photos */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
-          {inspection.status === 'approved' && inspection.driveFolderId ? (
-            <a
-              href={`https://drive.google.com/drive/folders/${inspection.driveFolderId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 w-full py-4 bg-blue-50 border-2 border-blue-200 rounded-xl text-blue-800 font-bold text-base active:bg-blue-100"
-            >
-              צפה בתמונות בדרייב 📂
-            </a>
-          ) : (
-            <>
-              <PhotoGrid photos={inspection.photos} inspectionId={id} readOnly />
-              {inspection.status === 'partially_approved' && inspection.driveFolderId && (
+        {/* Photos — three display modes:
+              1. approved: Drive folder link only
+              2. partial (uploading/partially_approved with some uploaded): split green/red view
+              3. pending / uploading-not-started: full grid */}
+        {(() => {
+          const uploadedPhotos = inspection.photos.filter((p) => p.driveFileId)
+          const failedPhotos   = inspection.photos.filter((p) => !p.driveFileId)
+          const hasSplitView   = (isPartiallyApproved || isUploading) && uploadedPhotos.length > 0
+
+          if (inspection.status === 'approved' && inspection.driveFolderId) {
+            return (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
                 <a
                   href={`https://drive.google.com/drive/folders/${inspection.driveFolderId}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 w-full mt-3 py-3 bg-blue-50 border-2 border-blue-200 rounded-xl text-blue-800 font-bold text-sm active:bg-blue-100"
+                  className="flex items-center justify-center gap-2 w-full py-4 bg-blue-50 border-2 border-blue-200 rounded-xl text-blue-800 font-bold text-base active:bg-blue-100"
                 >
-                  צפה בקבצים שהועלו בדרייב 📂
+                  צפה בתמונות בדרייב 📂
                 </a>
-              )}
-            </>
-          )}
-        </div>
+              </div>
+            )
+          }
 
-        {/* Partially approved — failed uploads warning + actions */}
-        {isPartiallyApproved && inspection.failedUploads?.length > 0 && (
-          <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-4 flex flex-col gap-3">
-            <p className="font-black text-orange-800">
-              ⚠️ {inspection.failedUploads.length} קבצים לא הועלו לדרייב
-            </p>
-            <ul className="text-sm text-orange-700 flex flex-col gap-1">
-              {inspection.failedUploads.map((f) => (
-                <li key={f.filename} className="font-mono truncate">
-                  • {f.originalName || f.filename}
-                  {f.error && <span className="text-orange-500 text-xs"> — {f.error}</span>}
-                </li>
-              ))}
-            </ul>
-            <div className="flex gap-2">
-              <button
-                onClick={retryUploads}
-                disabled={retrying}
-                className="flex-1 py-3 bg-orange-600 text-white font-bold rounded-xl disabled:opacity-50 text-sm"
-              >
-                {retrying ? '…' : '🔄 נסה שוב'}
-              </button>
-              <button
-                onClick={downloadFailedZip}
-                className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm"
-              >
-                📥 הורד קבצים שנכשלו
-              </button>
+          if (hasSplitView) {
+            return (
+              <div className="flex flex-col gap-3">
+                {/* Successfully uploaded */}
+                {uploadedPhotos.length > 0 && (
+                  <div className="bg-white rounded-xl border-2 border-green-200 p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="font-bold text-green-700">✅ הועלו לדרייב ({uploadedPhotos.length})</p>
+                      {inspection.driveFolderId && (
+                        <a
+                          href={`https://drive.google.com/drive/folders/${inspection.driveFolderId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-700 text-xs font-bold underline"
+                        >
+                          Drive 📂
+                        </a>
+                      )}
+                    </div>
+                    <PhotoGrid photos={uploadedPhotos} inspectionId={id} readOnly />
+                  </div>
+                )}
+
+                {/* Failed / missing uploads */}
+                {failedPhotos.length > 0 && (
+                  <div className="bg-white rounded-xl border-2 border-red-200 p-4 flex flex-col gap-3">
+                    <p className="font-bold text-red-700">❌ לא הועלו לדרייב ({failedPhotos.length})</p>
+                    <PhotoGrid photos={failedPhotos} inspectionId={id} readOnly />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={retryUploads}
+                        disabled={retrying}
+                        className="flex-1 py-3 bg-orange-600 text-white font-bold rounded-xl disabled:opacity-50 text-sm"
+                      >
+                        {retrying ? <Spinner size={4} /> : '🔄 נסה שוב'}
+                      </button>
+                      <button
+                        onClick={downloadFailedZip}
+                        className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm"
+                      >
+                        📥 הורד שנכשלו
+                      </button>
+                    </div>
+                    {error && <p className="text-red-600 text-sm">{error}</p>}
+                  </div>
+                )}
+              </div>
+            )
+          }
+
+          // Default: pending / fresh uploading — show all photos
+          return (
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
+              <PhotoGrid photos={inspection.photos} inspectionId={id} readOnly />
             </div>
-            {error && <p className="text-red-600 text-sm">{error}</p>}
-          </div>
-        )}
+          )
+        })()}
 
         {/* Actions */}
         <div className="flex gap-2">
@@ -296,7 +315,7 @@ export default function InspectionDetail() {
 
         {isPending && !result && (
           <>
-            {error && !isPartiallyApproved && <p className="text-red-600 text-sm">{error}</p>}
+            {error && <p className="text-red-600 text-sm">{error}</p>}
 
             {!showRejectForm ? (
               <div className="flex flex-col gap-3">
