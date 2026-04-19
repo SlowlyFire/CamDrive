@@ -60,15 +60,31 @@ export default function Share() {
           {inspection.notes && <Row label="הערות" value={inspection.notes} />}
         </div>
 
-        {/* Photos — read-only */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
-          <PhotoGrid
-            photos={inspection.photos}
-            inspectionId={inspection._id}
-            readOnly
-          />
-        </div>
+        {/* Photos / Videos
+              Approved: local files deleted after Drive upload — show Drive folder link only.
+              All other statuses: serve from local disk (supports Range requests for video). */}
+        {inspection.status === 'approved' && inspection.driveFolderId ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
+            <a
+              href={`https://drive.google.com/drive/folders/${inspection.driveFolderId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 w-full py-4 bg-blue-50 border-2 border-blue-200 rounded-xl text-blue-800 font-bold text-base active:bg-blue-100"
+            >
+              צפה בתמונות בדרייב 📂
+            </a>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
+            <PhotoGrid
+              photos={inspection.photos}
+              inspectionId={inspection._id}
+              readOnly
+            />
+          </div>
+        )}
       </div>
     </div>
   )

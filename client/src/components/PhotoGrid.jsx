@@ -110,6 +110,8 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
               className="max-h-screen max-w-screen object-contain"
               controls
               autoPlay
+              playsInline
+              preload="metadata"
               onClick={(e) => e.stopPropagation()}
             />
           ) : (

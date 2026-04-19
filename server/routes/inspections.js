@@ -237,11 +237,16 @@ router.get('/:id/photos/:filename', async (req, res) => {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       driveRes.data.pipe(res);
     } else {
-      // Serve from local disk — pending, rejected, or partially_approved (failed files)
+      // Serve from local disk — pending, rejected, or partially_approved (failed files).
+      // Set Content-Type explicitly so the browser treats .mov / .mp4 as video
+      // (Express's auto-detection can mis-identify QuickTime files).
+      // res.sendFile handles Range requests (206 Partial Content) so video
+      // seeking works correctly.
       const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), photo.filename);
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'קובץ לא נמצא' });
       }
+      res.setHeader('Content-Type', mimeForFilename(photo.filename));
       res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(filePath);
     }
