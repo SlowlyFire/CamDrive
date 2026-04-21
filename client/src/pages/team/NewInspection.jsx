@@ -6,6 +6,8 @@ import PhotoUploader from '../../components/PhotoUploader'
 import Spinner from '../../components/Spinner'
 import { isVideoFile } from '../../utils/imageUtils'
 
+const CHUNK_SIZE = 5 * 1024 * 1024 // 5 MB
+
 function VideoPreview({ src, name }) {
   const [failed, setFailed] = useState(false)
   if (failed) {
@@ -32,6 +34,48 @@ function VideoPreview({ src, name }) {
   )
 }
 
+async function uploadChunked(file, onProgress) {
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
+  const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE
+    const end = Math.min(start + CHUNK_SIZE, file.size)
+    const chunk = file.slice(start, end)
+
+    let lastErr
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const fd = new FormData()
+        fd.append('uploadId', uploadId)
+        fd.append('chunkIndex', String(i))
+        fd.append('totalChunks', String(totalChunks))
+        fd.append('originalName', file.name)
+        fd.append('chunk', chunk, file.name)
+
+        const r = await api.post('/upload/chunk', fd, {
+          onUploadProgress: (e) => {
+            const chunkFraction = e.total ? e.loaded / e.total : 1
+            onProgress(Math.round(((i + chunkFraction) / totalChunks) * 100))
+          },
+        })
+
+        if (r.data.done) {
+          onProgress(100)
+          return { filename: r.data.filename, originalName: r.data.originalName || file.name }
+        }
+        break // chunk accepted, not last chunk yet
+      } catch (err) {
+        lastErr = err
+        if (attempt < 2) await new Promise((res) => setTimeout(res, 1000 * (attempt + 1)))
+      }
+    }
+    if (lastErr && i === totalChunks - 1) throw lastErr
+  }
+
+  throw new Error('העלאה לא הושלמה')
+}
+
 export default function NewInspection() {
   const navigate = useNavigate()
   const myName = localStorage.getItem('myName')
@@ -52,8 +96,9 @@ export default function NewInspection() {
   const [documents, setDocuments] = useState([]) // { file, preview }
   const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [uploadStatus, setUploadStatus] = useState('') // e.g. "מעלה קובץ 1/3..."
   const [done, setDone] = useState(false)
-  const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
 
   useEffect(() => {
     api.get('/people').then((r) => setPeople(r.data))
@@ -67,11 +112,13 @@ export default function NewInspection() {
         ? f.members.filter((m) => m !== name)
         : [...f.members, name],
     }))
+    setFieldErrors((e) => ({ ...e, members: undefined }))
   }
 
   function addPhotos(files) {
     const newPhotos = files.map((f) => ({ file: f, preview: URL.createObjectURL(f) }))
     setPhotos((p) => [...p, ...newPhotos])
+    setFieldErrors((e) => ({ ...e, photos: undefined }))
   }
 
   function removePhoto(index) {
@@ -86,7 +133,6 @@ export default function NewInspection() {
     if (files.length === 0) return
     const newDocs = files.map((f) => ({ file: f, preview: URL.createObjectURL(f) }))
     setDocuments((d) => [...d, ...newDocs])
-    // Reset input so same file can be added again if removed
     e.target.value = ''
   }
 
@@ -99,32 +145,89 @@ export default function NewInspection() {
 
   async function submit(e) {
     e.preventDefault()
-    if (!form.licensePlate.trim()) { setError('נא להזין מספר רישוי'); return }
-    if (!form.vehicleType) { setError('נא לבחור סוג כלי'); return }
-    if (photos.length === 0) { setError('נא להוסיף לפחות תמונה אחת'); return }
-    setError('')
+
+    // Per-field validation
+    const errors = {}
+    if (!form.licensePlate.trim()) errors.licensePlate = 'שדה חובה'
+    if (!form.vehicleType) errors.vehicleType = 'שדה חובה'
+    if (form.members.length === 0) errors.members = 'שדה חובה'
+    if (photos.length === 0) errors.photos = 'שדה חובה'
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      return
+    }
+
+    setFieldErrors({})
     setSubmitting(true)
     setProgress(0)
-
-    const fd = new FormData()
-    fd.append('data', JSON.stringify({
-      ...form,
-      vehicleHours: form.vehicleHours ? Number(form.vehicleHours) : null,
-    }))
-    photos.forEach((p) => fd.append('photos', p.file))
-    documents.forEach((d) => fd.append('documents', d.file))
+    setUploadStatus('')
 
     try {
+      // Separate large and small files
+      const largePhotos = photos.filter((p) => p.file.size >= CHUNK_SIZE)
+      const smallPhotos = photos.filter((p) => p.file.size < CHUNK_SIZE)
+      const largeDocs = documents.filter((d) => d.file.size >= CHUNK_SIZE)
+      const smallDocs = documents.filter((d) => d.file.size < CHUNK_SIZE)
+
+      const preuploadedPhotos = []
+      const preuploadedDocuments = []
+
+      const totalLarge = largePhotos.length + largeDocs.length
+      let uploadedCount = 0
+
+      // Pre-upload large photos via chunks
+      for (const p of largePhotos) {
+        uploadedCount++
+        setUploadStatus(`מעלה קובץ ${uploadedCount}/${totalLarge}…`)
+        const result = await uploadChunked(p.file, (pct) => {
+          setProgress(Math.round(((uploadedCount - 1 + pct / 100) / Math.max(totalLarge, 1)) * 80))
+        })
+        preuploadedPhotos.push(result)
+      }
+
+      // Pre-upload large documents via chunks
+      for (const d of largeDocs) {
+        uploadedCount++
+        setUploadStatus(`מעלה קובץ ${uploadedCount}/${totalLarge}…`)
+        const result = await uploadChunked(d.file, (pct) => {
+          setProgress(Math.round(((uploadedCount - 1 + pct / 100) / Math.max(totalLarge, 1)) * 80))
+        })
+        preuploadedDocuments.push(result)
+      }
+
+      if (totalLarge > 0) {
+        setProgress(80)
+        setUploadStatus('שולח בחינה…')
+      }
+
+      // Build final FormData with small files + preuploaded references
+      const fd = new FormData()
+      fd.append('data', JSON.stringify({
+        ...form,
+        vehicleHours: form.vehicleHours ? Number(form.vehicleHours) : null,
+        preuploadedPhotos,
+        preuploadedDocuments,
+      }))
+      smallPhotos.forEach((p) => fd.append('photos', p.file))
+      smallDocs.forEach((d) => fd.append('documents', d.file))
+
       await api.post('/inspections', fd, {
-        onUploadProgress: (e) => setProgress(Math.round((e.loaded / e.total) * 100)),
+        onUploadProgress: (e) => {
+          const base = totalLarge > 0 ? 80 : 0
+          const range = 100 - base
+          setProgress(base + Math.round((e.total ? e.loaded / e.total : 1) * range))
+        },
       })
+
       // Cleanup previews
       photos.forEach((p) => URL.revokeObjectURL(p.preview))
       documents.forEach((d) => URL.revokeObjectURL(d.preview))
       setDone(true)
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'שגיאה בשליחה')
+      setFieldErrors({ submit: err.response?.data?.error || err.message || 'שגיאה בשליחה' })
       setSubmitting(false)
+      setUploadStatus('')
     }
   }
 
@@ -152,25 +255,40 @@ export default function NewInspection() {
 
         {/* License plate */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-1">מספר רישוי</label>
+          <label className="block text-sm font-bold text-gray-700 mb-1">
+            מספר רישוי
+            {fieldErrors.licensePlate && <span className="text-red-500 font-bold mr-2">{fieldErrors.licensePlate}</span>}
+          </label>
           <input
             type="text"
             inputMode="numeric"
             value={form.licensePlate}
-            onChange={(e) => setForm((f) => ({ ...f, licensePlate: e.target.value }))}
+            onChange={(e) => {
+              setForm((f) => ({ ...f, licensePlate: e.target.value }))
+              setFieldErrors((err) => ({ ...err, licensePlate: undefined }))
+            }}
             placeholder="למשל: 181398"
-            className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg font-mono focus:border-blue-900 outline-none"
+            className={`w-full border-2 rounded-xl px-4 py-3 text-lg font-mono focus:outline-none ${
+              fieldErrors.licensePlate ? 'border-red-500 focus:border-red-500' : 'border-gray-300 focus:border-blue-900'
+            }`}
           />
         </div>
 
         {/* Vehicle type */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-1">סוג כלי *</label>
+          <label className="block text-sm font-bold text-gray-700 mb-1">
+            סוג כלי
+            {fieldErrors.vehicleType && <span className="text-red-500 font-bold mr-2">{fieldErrors.vehicleType}</span>}
+          </label>
           <select
             value={form.vehicleType}
-            onChange={(e) => setForm((f) => ({ ...f, vehicleType: e.target.value }))}
-            className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-900 outline-none bg-white"
-            required
+            onChange={(e) => {
+              setForm((f) => ({ ...f, vehicleType: e.target.value }))
+              setFieldErrors((err) => ({ ...err, vehicleType: undefined }))
+            }}
+            className={`w-full border-2 rounded-xl px-4 py-3 text-lg focus:outline-none bg-white ${
+              fieldErrors.vehicleType ? 'border-red-500 focus:border-red-500' : 'border-gray-300 focus:border-blue-900'
+            }`}
           >
             <option value="">בחר סוג כלי...</option>
             {vehicleTypes.map((t) => (
@@ -200,8 +318,11 @@ export default function NewInspection() {
 
         {/* Members */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-2">חברי צוות</label>
-          <div className="flex flex-wrap gap-2">
+          <label className="block text-sm font-bold text-gray-700 mb-2">
+            חברי צוות
+            {fieldErrors.members && <span className="text-red-500 font-bold mr-2">{fieldErrors.members}</span>}
+          </label>
+          <div className={`flex flex-wrap gap-2 p-2 rounded-xl ${fieldErrors.members ? 'border-2 border-red-500' : ''}`}>
             {people.map((p) => (
               <button
                 key={p._id}
@@ -300,8 +421,13 @@ export default function NewInspection() {
 
         {/* Photos & Videos */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-2">תמונות וסרטונים ({photos.length})</label>
-          <PhotoUploader onFilesReady={addPhotos} disabled={submitting} />
+          <label className="block text-sm font-bold text-gray-700 mb-2">
+            תמונות וסרטונים ({photos.length})
+            {fieldErrors.photos && <span className="text-red-500 font-bold mr-2">{fieldErrors.photos}</span>}
+          </label>
+          <div className={fieldErrors.photos ? 'rounded-xl border-2 border-red-500 p-1' : ''}>
+            <PhotoUploader onFilesReady={addPhotos} disabled={submitting} />
+          </div>
           {photos.length > 0 && (
             <div className="grid grid-cols-4 gap-1 mt-2">
               {photos.map((p, i) => (
@@ -322,14 +448,18 @@ export default function NewInspection() {
           )}
         </div>
 
-        {error && <p className="text-red-600 text-sm font-semibold">{error}</p>}
+        {fieldErrors.submit && <p className="text-red-600 text-sm font-semibold">{fieldErrors.submit}</p>}
 
         {submitting && (
-          <div className="w-full bg-gray-200 rounded-full h-3">
-            <div
-              className="bg-blue-900 h-3 rounded-full transition-all"
-              style={{ width: `${progress}%` }}
-            />
+          <div className="flex flex-col gap-2">
+            {uploadStatus && <p className="text-sm text-gray-600 text-center font-semibold">{uploadStatus}</p>}
+            <div className="w-full bg-gray-200 rounded-full h-3">
+              <div
+                className="bg-blue-900 h-3 rounded-full transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-500 text-center">{progress}%</p>
           </div>
         )}
 
