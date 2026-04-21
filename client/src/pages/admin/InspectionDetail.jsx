@@ -207,6 +207,7 @@ export default function InspectionDetail() {
           {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
           {inspection.securityCode && <Row label="קודן" value={inspection.securityCode} />}
           {inspection.notes && <Row label="הערות" value={inspection.notes} />}
+          {inspection.approvedBy && <Row label="טופל ע״י" value={inspection.approvedBy} />}
           {inspection.status === 'rejected' && inspection.rejectionReason && (
             <div className="mt-2 p-3 bg-red-50 rounded-lg">
               <p className="text-red-700 text-sm font-bold">סיבת דחייה:</p>

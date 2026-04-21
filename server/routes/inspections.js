@@ -147,7 +147,12 @@ router.post('/', requireTeamCode, uploadLimiter, upload.fields([
     const photoFiles = (req.files && req.files['photos']) ? req.files['photos'] : [];
     const documentFiles = (req.files && req.files['documents']) ? req.files['documents'] : [];
 
-    if (photoFiles.length === 0 && documentFiles.length === 0) {
+    // References to files pre-uploaded via chunked upload
+    const preuploadedPhotos = Array.isArray(data.preuploadedPhotos) ? data.preuploadedPhotos : [];
+    const preuploadedDocuments = Array.isArray(data.preuploadedDocuments) ? data.preuploadedDocuments : [];
+
+    if (photoFiles.length === 0 && documentFiles.length === 0 &&
+        preuploadedPhotos.length === 0 && preuploadedDocuments.length === 0) {
       return res.status(400).json({ error: 'נא להוסיף לפחות תמונה או סרטון אחד' });
     }
 
@@ -186,7 +191,44 @@ router.post('/', requireTeamCode, uploadLimiter, upload.fields([
       inspection.documents.push(...movedDocs);
     }
 
-    if (photoFiles.length > 0 || documentFiles.length > 0) {
+    // Move pre-uploaded (chunked) photos from _tmp to inspection dir
+    if (preuploadedPhotos.length > 0) {
+      const dest = path.join(UPLOADS_BASE, inspection._id.toString());
+      fs.mkdirSync(dest, { recursive: true });
+      for (const f of preuploadedPhotos) {
+        const safeFilename = path.basename(f.filename || '');
+        if (!safeFilename) continue;
+        const srcPath = path.join(UPLOADS_BASE, '_tmp', safeFilename);
+        if (fs.existsSync(srcPath)) {
+          fs.renameSync(srcPath, path.join(dest, safeFilename));
+          inspection.photos.push({
+            filename: safeFilename,
+            originalName: f.originalName || safeFilename,
+          });
+        }
+      }
+    }
+
+    // Move pre-uploaded (chunked) documents from _tmp to inspection dir
+    if (preuploadedDocuments.length > 0) {
+      const dest = path.join(UPLOADS_BASE, inspection._id.toString());
+      fs.mkdirSync(dest, { recursive: true });
+      for (const f of preuploadedDocuments) {
+        const safeFilename = path.basename(f.filename || '');
+        if (!safeFilename) continue;
+        const srcPath = path.join(UPLOADS_BASE, '_tmp', safeFilename);
+        if (fs.existsSync(srcPath)) {
+          fs.renameSync(srcPath, path.join(dest, safeFilename));
+          inspection.documents.push({
+            filename: safeFilename,
+            originalName: f.originalName || safeFilename,
+          });
+        }
+      }
+    }
+
+    if (photoFiles.length > 0 || documentFiles.length > 0 ||
+        preuploadedPhotos.length > 0 || preuploadedDocuments.length > 0) {
       await inspection.save();
     }
 
@@ -383,6 +425,55 @@ router.delete('/:id/photos/:photoFilename', requireTeamCode, async (req, res) =>
   }
 });
 
+// PUT /api/inspections/:id/documents — add documents (pending or rejected)
+router.put('/:id/documents', requireTeamCode, uploadLimiter, upload.array('documents', 50), async (req, res) => {
+  try {
+    const inspection = await Inspection.findById(req.params.id);
+    if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
+    if (!['pending', 'rejected'].includes(inspection.status)) {
+      return res.status(400).json({ error: 'ניתן לערוך מסמכים רק לבחינות במצב ממתין או נדחה' });
+    }
+
+    if (req.files && req.files.length > 0) {
+      const movedDocs = moveFilesToInspectionDir(req.files, inspection._id);
+      inspection.documents.push(...movedDocs);
+      await inspection.save();
+    }
+
+    res.json(inspection);
+  } catch (err) {
+    if (req.files) {
+      for (const f of req.files) fs.unlink(f.path, () => {});
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/inspections/:id/documents/:docFilename — delete one document (pending or rejected)
+router.delete('/:id/documents/:docFilename', requireTeamCode, async (req, res) => {
+  try {
+    const inspection = await Inspection.findById(req.params.id);
+    if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
+    if (!['pending', 'rejected'].includes(inspection.status)) {
+      return res.status(400).json({ error: 'ניתן לערוך מסמכים רק לבחינות במצב ממתין או נדחה' });
+    }
+
+    const filename = req.params.docFilename;
+    const docIndex = inspection.documents.findIndex((d) => d.filename === filename);
+    if (docIndex === -1) return res.status(404).json({ error: 'מסמך לא נמצא' });
+
+    inspection.documents.splice(docIndex, 1);
+    await inspection.save();
+
+    const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), filename);
+    fs.unlink(filePath, () => {});
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/inspections/:id/approve — atomic 3-phase approval
 //
 // Phase 1  Create the Drive folder + subfolders + upsert Vehicle (inside the
@@ -496,11 +587,13 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
       inspection.status = 'approved';
       inspection.processedAt = new Date();
       inspection.failedUploads = [];
+      inspection.approvedBy = req.manager?.managerName || null;
       await inspection.save();
       deleteInspectionFiles(inspection._id);
     } else {
       inspection.status = 'partially_approved';
       inspection.processedAt = new Date();
+      inspection.approvedBy = req.manager?.managerName || null;
       inspection.failedUploads = [
         ...stillMissingPhotos.map((p) => ({
           filename:     p.filename,
@@ -831,6 +924,7 @@ router.post('/:id/classify', requireAuth, async (req, res) => {
     inspection.classifiedAt = new Date();
     inspection.processedAt = new Date();
     inspection.driveFolderId = folderId;
+    inspection.approvedBy = req.manager?.managerName || null;
     await inspection.save();
 
     deleteInspectionFiles(inspection._id);

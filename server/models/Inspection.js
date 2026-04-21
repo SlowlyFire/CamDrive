@@ -56,6 +56,7 @@ const inspectionSchema = new mongoose.Schema({
   rejectionReason: { type: String, default: '' },
   processedAt: { type: Date, default: null },
   classifiedAt: { type: Date, default: null },
+  approvedBy: { type: String, default: null },
 });
 
 inspectionSchema.index({ members: 1 });

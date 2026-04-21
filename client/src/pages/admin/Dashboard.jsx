@@ -16,9 +16,11 @@ const TABS = [
 export default function Dashboard() {
   const navigate = useNavigate()
   const [tab, setTab] = useState('pending')
+  const managerName = localStorage.getItem('managerName') || ''
 
   function logout() {
     localStorage.removeItem('adminToken')
+    localStorage.removeItem('managerName')
     navigate('/')
   }
 
@@ -26,7 +28,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gray-50 flex flex-col" dir="rtl">
       {/* Header */}
       <div className="bg-blue-900 text-white px-4 py-3 flex items-center justify-between sticky top-0 z-10">
-        <span className="font-black text-lg">CamDrive — מנהל</span>
+        <span className="font-black text-lg">CamDrive — {managerName || 'מנהל'}</span>
         <button onClick={logout} className="text-blue-300 text-sm font-semibold">יציאה</button>
       </div>
 
@@ -214,12 +216,18 @@ function VehiclesTab({ navigate }) {
 // ── People Tab ─────────────────────────────────────────────────────────────
 function PeopleTab() {
   const [people, setPeople] = useState([])
+  const [managers, setManagers] = useState([])
   const [newName, setNewName] = useState('')
+  const [newManagerName, setNewManagerName] = useState('')
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
+  const [addingManager, setAddingManager] = useState(false)
 
   const load = useCallback(() => {
-    api.get('/people').then((r) => setPeople(r.data)).finally(() => setLoading(false))
+    Promise.all([
+      api.get('/people').then((r) => setPeople(r.data)),
+      api.get('/managers').then((r) => setManagers(r.data)),
+    ]).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -231,7 +239,7 @@ function PeopleTab() {
     try {
       await api.post('/people', { name: newName.trim() })
       setNewName('')
-      load()
+      api.get('/people').then((r) => setPeople(r.data))
     } finally {
       setAdding(false)
     }
@@ -243,38 +251,87 @@ function PeopleTab() {
     setPeople((p) => p.filter((x) => x._id !== id))
   }
 
+  async function addManager(e) {
+    e.preventDefault()
+    if (!newManagerName.trim()) return
+    setAddingManager(true)
+    try {
+      await api.post('/managers', { name: newManagerName.trim() })
+      setNewManagerName('')
+      api.get('/managers').then((r) => setManagers(r.data))
+    } catch (err) {
+      alert(err.response?.data?.error || 'שגיאה')
+    } finally {
+      setAddingManager(false)
+    }
+  }
+
+  async function removeManager(id) {
+    if (!confirm('להסיר את המנהל?')) return
+    await api.delete(`/managers/${id}`)
+    setManagers((m) => m.filter((x) => x._id !== id))
+  }
+
   if (loading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div>
-      <form onSubmit={add} className="flex gap-2 mb-4">
-        <input
-          type="text"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="שם חדש…"
-          className="flex-1 border-2 border-gray-300 rounded-xl px-4 py-3 focus:border-blue-900 outline-none"
-        />
-        <button
-          type="submit"
-          disabled={adding || !newName.trim()}
-          className="px-5 py-3 bg-blue-900 text-white font-bold rounded-xl disabled:opacity-50"
-        >
-          הוסף
-        </button>
-      </form>
-      <div className="flex flex-col gap-2">
-        {people.map((p) => (
-          <div key={p._id} className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center justify-between">
-            <span className="font-semibold text-gray-900">{p.name}</span>
-            <button
-              onClick={() => remove(p._id)}
-              className="text-red-500 text-sm font-bold px-2 py-1"
-            >
-              הסר
-            </button>
-          </div>
-        ))}
+    <div className="flex flex-col gap-6">
+      {/* Team members */}
+      <div>
+        <p className="font-black text-gray-700 mb-3">חברי צוות</p>
+        <form onSubmit={add} className="flex gap-2 mb-3">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="שם חדש…"
+            className="flex-1 border-2 border-gray-300 rounded-xl px-4 py-3 focus:border-blue-900 outline-none"
+          />
+          <button
+            type="submit"
+            disabled={adding || !newName.trim()}
+            className="px-5 py-3 bg-blue-900 text-white font-bold rounded-xl disabled:opacity-50"
+          >
+            הוסף
+          </button>
+        </form>
+        <div className="flex flex-col gap-2">
+          {people.map((p) => (
+            <div key={p._id} className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center justify-between">
+              <span className="font-semibold text-gray-900">{p.name}</span>
+              <button onClick={() => remove(p._id)} className="text-red-500 text-sm font-bold px-2 py-1">הסר</button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Managers */}
+      <div>
+        <p className="font-black text-gray-700 mb-3">מנהלים</p>
+        <form onSubmit={addManager} className="flex gap-2 mb-3">
+          <input
+            type="text"
+            value={newManagerName}
+            onChange={(e) => setNewManagerName(e.target.value)}
+            placeholder="שם מנהל חדש…"
+            className="flex-1 border-2 border-gray-300 rounded-xl px-4 py-3 focus:border-blue-900 outline-none"
+          />
+          <button
+            type="submit"
+            disabled={addingManager || !newManagerName.trim()}
+            className="px-5 py-3 bg-blue-900 text-white font-bold rounded-xl disabled:opacity-50"
+          >
+            הוסף
+          </button>
+        </form>
+        <div className="flex flex-col gap-2">
+          {managers.map((m) => (
+            <div key={m._id} className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center justify-between">
+              <span className="font-semibold text-gray-900">{m.name}</span>
+              <button onClick={() => removeManager(m._id)} className="text-red-500 text-sm font-bold px-2 py-1">הסר</button>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )

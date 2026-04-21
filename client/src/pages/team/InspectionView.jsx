@@ -56,6 +56,32 @@ export default function InspectionView() {
     }
   }
 
+  async function addDocuments(e) {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+    e.target.value = ''
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      files.forEach((f) => fd.append('documents', f))
+      const r = await api.put(`/inspections/${id}/documents`, fd)
+      setInspection(r.data)
+    } catch (err) {
+      setError(err.response?.data?.error || 'שגיאה בהעלאה')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function deleteDocument(filename) {
+    try {
+      await api.delete(`/inspections/${id}/documents/${filename}`)
+      setInspection((i) => ({ ...i, documents: (i.documents || []).filter((d) => d.filename !== filename) }))
+    } catch (err) {
+      setError(err.response?.data?.error || 'שגיאה במחיקה')
+    }
+  }
+
   async function resubmit() {
     setResubmitting(true)
     setError('')
@@ -120,6 +146,35 @@ export default function InspectionView() {
           {inspection.securityCode && <Row label="קודן" value={inspection.securityCode} />}
           {inspection.notes && <Row label="הערות" value={inspection.notes} />}
         </div>
+
+        {/* Documents */}
+        {(isEditable || (inspection.documents?.length > 0)) && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="font-bold text-gray-700 mb-3">מסמכים וטפסים ({inspection.documents?.length || 0})</p>
+            {inspection.documents?.length > 0 && (
+              <PhotoGrid
+                photos={inspection.documents}
+                inspectionId={id}
+                urlBase="documents"
+                onDelete={isEditable ? deleteDocument : null}
+                readOnly={!isEditable}
+              />
+            )}
+            {isEditable && (
+              <label className="flex items-center justify-center gap-2 w-full py-3 mt-2 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer bg-white active:bg-gray-50 text-gray-600 font-semibold text-sm">
+                <span>📄 הוסף מסמכים</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={addDocuments}
+                  disabled={uploading}
+                />
+              </label>
+            )}
+          </div>
+        )}
 
         {/* Photos */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">

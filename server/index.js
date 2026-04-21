@@ -14,6 +14,8 @@ const vehicleRoutes = require('./routes/vehicles');
 const inspectionRoutes = require('./routes/inspections');
 const statsRoutes = require('./routes/stats');
 const vehicleTypeRoutes = require('./routes/vehicle-types');
+const managersRoutes = require('./routes/managers');
+const uploadRoutes = require('./routes/upload');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -76,6 +78,8 @@ app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/inspections', inspectionRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/vehicle-types', vehicleTypeRoutes);
+app.use('/api/managers', managersRoutes);
+app.use('/api/upload', uploadRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
@@ -91,8 +95,24 @@ if (isProd) {
 }
 
 // ── Startup sequence ───────────────────────────────────────────────────────
+const Manager = require('./models/Manager');
+const SEED_MANAGERS = ['דניאל', 'גל', 'יקיר', 'תומר', 'זיו', 'ליז', 'סהר', 'אלעד', 'נאור'];
+
+async function seedManagers() {
+  await Manager.bulkWrite(
+    SEED_MANAGERS.map((name) => ({
+      updateOne: {
+        filter: { name },
+        update: { $setOnInsert: { name } },
+        upsert: true,
+      },
+    }))
+  );
+}
+
 initPasswordHashes()
   .then(() => mongoose.connect(process.env.MONGODB_URI))
+  .then(() => seedManagers())
   .then(() => {
     console.log('Connected to MongoDB');
     const server = app.listen(PORT, () => {
