@@ -15,7 +15,7 @@ export default function InspectionDetail() {
   const [actionLoading, setActionLoading] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showRejectForm, setShowRejectForm] = useState(false)
-  const [result, setResult] = useState(null) // { type: 'approved'|'partially_approved'|'rejected', folderName? }
+  const [result, setResult] = useState(null) // { type: 'approved'|'partially_approved'|'rejected'|classification, folderName? }
   const [retrying, setRetrying] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [error, setError] = useState('')
@@ -89,6 +89,22 @@ export default function InspectionDetail() {
     }
   }
 
+  async function classify(classification) {
+    const labels = { reserve: 'רזרבה', temporarily_disqualified: 'נפסל זמנית', disqualified: 'נפסל' }
+    if (!confirm(`לסווג כ"${labels[classification]}"?`)) return
+    setActionLoading(true)
+    setError('')
+    try {
+      const r = await api.post(`/inspections/${id}/classify`, { classification })
+      setResult({ type: classification, folderName: r.data.driveFolderName })
+      setInspection(r.data.inspection)
+    } catch (err) {
+      setError(err.response?.data?.error || 'שגיאה בסיווג')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   function copyShareLink() {
     const url = `${window.location.origin}/share/${inspection.shareToken}`
     navigator.clipboard.writeText(url).then(() => alert('קישור הועתק!'))
@@ -132,6 +148,7 @@ export default function InspectionDetail() {
   const isPending = inspection.status === 'pending' || inspection.status === 'uploading'
   const isUploading = inspection.status === 'uploading'
   const isPartiallyApproved = inspection.status === 'partially_approved'
+  const isClassified = ['reserve', 'temporarily_disqualified', 'disqualified'].includes(inspection.status)
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col" dir="rtl">
@@ -139,7 +156,7 @@ export default function InspectionDetail() {
 
       <div className="flex-1 p-4 flex flex-col gap-4 pb-8">
 
-        {/* Result banner */}
+        {/* Result banners */}
         {result?.type === 'approved' && (
           <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4">
             <p className="text-green-800 font-bold">✅ הבחינה אושרה ועלתה ל-Drive!</p>
@@ -159,6 +176,14 @@ export default function InspectionDetail() {
             <p className="text-red-800 font-bold">❌ הבחינה נדחתה</p>
           </div>
         )}
+        {['reserve', 'temporarily_disqualified', 'disqualified'].includes(result?.type) && (
+          <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4">
+            <p className="text-yellow-800 font-bold">
+              {result.type === 'reserve' ? '🟡 סווג כרזרבה' : result.type === 'temporarily_disqualified' ? '🟠 סווג כנפסל זמנית' : '🔴 סווג כנפסל'}
+            </p>
+            {result.folderName && <p className="text-yellow-700 text-sm mt-1">📁 {result.folderName}</p>}
+          </div>
+        )}
 
         {/* Interrupted upload note — only when nothing uploaded yet */}
         {isUploading && !result && inspection.photos.every((p) => !p.driveFileId) && (
@@ -176,6 +201,7 @@ export default function InspectionDetail() {
 
         {/* Metadata */}
         <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-2">
+          {inspection.vehicleType && <Row label="סוג כלי" value={inspection.vehicleType} />}
           {inspection.members?.length > 0 && <Row label="צוות" value={inspection.members.join(', ')} />}
           {inspection.location && <Row label="מיקום" value={inspection.location} />}
           {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
@@ -189,26 +215,27 @@ export default function InspectionDetail() {
           )}
         </div>
 
-        {/* Photos — three display modes:
-              1. approved: Drive folder link only
-              2. partial (uploading/partially_approved with some uploaded): split green/red view
-              3. pending / uploading-not-started: full grid */}
+        {/* Photos / Documents — display modes */}
         {(() => {
           const uploadedPhotos = inspection.photos.filter((p) => p.driveFileId)
           const failedPhotos   = inspection.photos.filter((p) => !p.driveFileId)
           const hasSplitView   = isPartiallyApproved
 
-          if (inspection.status === 'approved' && inspection.driveFolderId) {
+          // Approved or classified with Drive folder — show link
+          if ((inspection.status === 'approved' || isClassified) && inspection.driveFolderId) {
             return (
               <div className="bg-white rounded-xl border border-gray-200 p-4">
-                <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
+                <p className="font-bold text-gray-700 mb-3">
+                  תמונות וסרטונים ({inspection.photos.length})
+                  {inspection.documents?.length > 0 && ` · מסמכים (${inspection.documents.length})`}
+                </p>
                 <a
                   href={`https://drive.google.com/drive/folders/${inspection.driveFolderId}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center gap-2 w-full py-4 bg-blue-50 border-2 border-blue-200 rounded-xl text-blue-800 font-bold text-base active:bg-blue-100"
                 >
-                  צפה בתמונות בדרייב 📂
+                  צפה בתיקייה בדרייב 📂
                 </a>
               </div>
             )
@@ -264,11 +291,19 @@ export default function InspectionDetail() {
             )
           }
 
-          // Default: pending / fresh uploading — show all photos
+          // Default: pending / fresh uploading — show documents + photos
           return (
-            <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
-              <PhotoGrid photos={inspection.photos} inspectionId={id} readOnly />
+            <div className="flex flex-col gap-3">
+              {inspection.documents?.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                  <p className="font-bold text-gray-700 mb-3">מסמכים וטפסים ({inspection.documents.length})</p>
+                  <PhotoGrid photos={inspection.documents} inspectionId={id} urlBase="documents" readOnly />
+                </div>
+              )}
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
+                <PhotoGrid photos={inspection.photos} inspectionId={id} readOnly />
+              </div>
             </div>
           )
         })()}
@@ -339,6 +374,34 @@ export default function InspectionDetail() {
                 >
                   ❌ דחה
                 </button>
+
+                {/* Classification buttons */}
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm font-bold text-gray-500 text-center">— או סווג —</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => classify('reserve')}
+                      disabled={actionLoading}
+                      className="flex-1 py-3 bg-yellow-500 text-white font-bold rounded-xl text-sm disabled:opacity-50"
+                    >
+                      🟡 רזרבה
+                    </button>
+                    <button
+                      onClick={() => classify('temporarily_disqualified')}
+                      disabled={actionLoading}
+                      className="flex-1 py-3 bg-orange-600 text-white font-bold rounded-xl text-sm disabled:opacity-50"
+                    >
+                      🟠 נפסל זמנית
+                    </button>
+                    <button
+                      onClick={() => classify('disqualified')}
+                      disabled={actionLoading}
+                      className="flex-1 py-3 bg-red-800 text-white font-bold rounded-xl text-sm disabled:opacity-50"
+                    >
+                      🔴 נפסל
+                    </button>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="bg-white rounded-xl border-2 border-red-300 p-4 flex flex-col gap-3">

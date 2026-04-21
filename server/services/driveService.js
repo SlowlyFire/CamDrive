@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DRIVE_ROOT_FOLDER_ID = process.env.DRIVE_ROOT_FOLDER_ID;
+const DRIVE_SECONDARY_FOLDER_ID = process.env.DRIVE_SECONDARY_FOLDER_ID;
 
 // ── MIME lookup ────────────────────────────────────────────────────────────
 const UPLOAD_MIME = {
@@ -139,6 +140,24 @@ async function createFolder(name, parentId) {
     fields: 'id, name',
   });
   return { id: res.data.id, name: res.data.name };
+}
+
+/**
+ * Find an existing subfolder by name inside parentId, or create it.
+ * Returns the folder ID.
+ */
+async function findOrCreateSubfolder(name, parentId) {
+  const drive = getDriveClient();
+  const res = await drive.files.list({
+    q: `'${parentId}' in parents and name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id,name)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+    pageSize: 1,
+  });
+  if (res.data.files && res.data.files.length > 0) return res.data.files[0].id;
+  const created = await createFolder(name, parentId);
+  return created.id;
 }
 
 /**
@@ -282,11 +301,11 @@ function determineNextLetter(plate, type, rootFolders) {
 /**
  * prepareApprovalFolder — Phase 1 of the approval flow.
  *
- * Determines the next letter, creates the Drive folder, and upserts the
- * Vehicle record — all inside the per-plate approval lock so concurrent
- * approvals for the same plate never pick the same letter.
+ * Determines the next letter, creates the Drive folder and subfolders,
+ * and upserts the Vehicle record — all inside the per-plate approval lock
+ * so concurrent approvals for the same plate never pick the same letter.
  *
- * Returns { vehicle, folderName, folderId, letter }
+ * Returns { vehicle, folderName, folderId, letter, docsFolderId, photosFolderId }
  *
  * Call this ONCE, save folderId to the inspection immediately, then upload
  * files separately so a crash mid-upload doesn't lose the folder reference.
@@ -305,12 +324,24 @@ async function prepareApprovalFolder(inspection) {
     const folderName = `${typeHebrew} ${licensePlate}-${letter} ${dateStr}`;
     const { id: folderId } = await createFolder(folderName, DRIVE_ROOT_FOLDER_ID);
 
+    // Create subfolders for documents and photos/videos
+    let docsFolderId = null;
+    let photosFolderId = null;
+    if (inspection.documents && inspection.documents.length > 0) {
+      const df = await createFolder('מסמכים', folderId);
+      docsFolderId = df.id;
+    }
+    if (inspection.photos && inspection.photos.length > 0) {
+      const pf = await createFolder('תמונות', folderId);
+      photosFolderId = pf.id;
+    }
+
     let vehicle = await Vehicle.findOne({ licensePlate });
     if (!vehicle) vehicle = new Vehicle({ licensePlate });
     vehicle.driveFolders.push({ folderId, folderName, type, createdAt: new Date() });
     await vehicle.save();
 
-    return { vehicle, folderName, folderId, letter };
+    return { vehicle, folderName, folderId, letter, docsFolderId, photosFolderId };
   });
 }
 
@@ -365,6 +396,7 @@ async function processApproval(inspection, uploadsBaseDir) {
 module.exports = {
   getDriveClient,
   createFolder,
+  findOrCreateSubfolder,
   deleteFile,
   uploadFile,
   uploadFileWithRetry,
@@ -378,4 +410,5 @@ module.exports = {
   isReleaseFolder,
   formatDate,
   processApproval,
+  DRIVE_SECONDARY_FOLDER_ID,
 };

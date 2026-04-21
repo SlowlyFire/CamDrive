@@ -13,6 +13,7 @@ const peopleRoutes = require('./routes/people');
 const vehicleRoutes = require('./routes/vehicles');
 const inspectionRoutes = require('./routes/inspections');
 const statsRoutes = require('./routes/stats');
+const vehicleTypeRoutes = require('./routes/vehicle-types');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -74,6 +75,7 @@ app.use('/api/vehicle', vehicleRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/inspections', inspectionRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/vehicle-types', vehicleTypeRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });

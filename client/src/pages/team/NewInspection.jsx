@@ -37,8 +37,10 @@ export default function NewInspection() {
   const myName = localStorage.getItem('myName')
 
   const [people, setPeople] = useState([])
+  const [vehicleTypes, setVehicleTypes] = useState([])
   const [form, setForm] = useState({
     licensePlate: '',
+    vehicleType: '',
     type: 'enlistment',
     members: myName ? [myName] : [],
     vehicleHours: '',
@@ -47,6 +49,7 @@ export default function NewInspection() {
     securityCode: '',
   })
   const [photos, setPhotos] = useState([]) // { file, preview }
+  const [documents, setDocuments] = useState([]) // { file, preview }
   const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState(0)
   const [done, setDone] = useState(false)
@@ -54,6 +57,7 @@ export default function NewInspection() {
 
   useEffect(() => {
     api.get('/people').then((r) => setPeople(r.data))
+    api.get('/vehicle-types').then((r) => setVehicleTypes(r.data)).catch(() => {})
   }, [])
 
   function toggleMember(name) {
@@ -77,9 +81,26 @@ export default function NewInspection() {
     })
   }
 
+  function addDocuments(e) {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+    const newDocs = files.map((f) => ({ file: f, preview: URL.createObjectURL(f) }))
+    setDocuments((d) => [...d, ...newDocs])
+    // Reset input so same file can be added again if removed
+    e.target.value = ''
+  }
+
+  function removeDocument(index) {
+    setDocuments((d) => {
+      URL.revokeObjectURL(d[index].preview)
+      return d.filter((_, i) => i !== index)
+    })
+  }
+
   async function submit(e) {
     e.preventDefault()
     if (!form.licensePlate.trim()) { setError('נא להזין מספר רישוי'); return }
+    if (!form.vehicleType) { setError('נא לבחור סוג כלי'); return }
     if (photos.length === 0) { setError('נא להוסיף לפחות תמונה אחת'); return }
     setError('')
     setSubmitting(true)
@@ -91,11 +112,15 @@ export default function NewInspection() {
       vehicleHours: form.vehicleHours ? Number(form.vehicleHours) : null,
     }))
     photos.forEach((p) => fd.append('photos', p.file))
+    documents.forEach((d) => fd.append('documents', d.file))
 
     try {
       await api.post('/inspections', fd, {
         onUploadProgress: (e) => setProgress(Math.round((e.loaded / e.total) * 100)),
       })
+      // Cleanup previews
+      photos.forEach((p) => URL.revokeObjectURL(p.preview))
+      documents.forEach((d) => URL.revokeObjectURL(d.preview))
       setDone(true)
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'שגיאה בשליחה')
@@ -136,6 +161,22 @@ export default function NewInspection() {
             placeholder="למשל: 181398"
             className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg font-mono focus:border-blue-900 outline-none"
           />
+        </div>
+
+        {/* Vehicle type */}
+        <div>
+          <label className="block text-sm font-bold text-gray-700 mb-1">סוג כלי *</label>
+          <select
+            value={form.vehicleType}
+            onChange={(e) => setForm((f) => ({ ...f, vehicleType: e.target.value }))}
+            className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-900 outline-none bg-white"
+            required
+          >
+            <option value="">בחר סוג כלי...</option>
+            {vehicleTypes.map((t) => (
+              <option key={t._id} value={t.name}>{t.name}</option>
+            ))}
+          </select>
         </div>
 
         {/* Type toggle */}
@@ -225,6 +266,36 @@ export default function NewInspection() {
             placeholder="פרט תקלות, מצב הרכב..."
             className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-base focus:border-blue-900 outline-none resize-none"
           />
+        </div>
+
+        {/* Documents */}
+        <div>
+          <label className="block text-sm font-bold text-gray-700 mb-2">מסמכים וטפסים ({documents.length})</label>
+          <label className="flex items-center justify-center gap-2 w-full py-3 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer bg-white active:bg-gray-50 text-gray-600 font-semibold text-sm">
+            <span>📄 הוסף מסמכים</span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={addDocuments}
+              disabled={submitting}
+            />
+          </label>
+          {documents.length > 0 && (
+            <div className="grid grid-cols-4 gap-1 mt-2">
+              {documents.map((d, i) => (
+                <div key={i} className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden">
+                  <img src={d.preview} className="w-full h-full object-cover" alt="" />
+                  <button
+                    type="button"
+                    onClick={() => removeDocument(i)}
+                    className="absolute top-0.5 left-0.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Photos & Videos */}

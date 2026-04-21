@@ -50,14 +50,14 @@ function VideoThumbnail({ src, filename, onClick }) {
   )
 }
 
-export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = false }) {
+export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = false, urlBase = 'photos' }) {
   const [lightbox, setLightbox] = useState(null)
 
   if (!photos || photos.length === 0) {
     return <p className="text-gray-400 text-sm text-center py-4">אין תמונות</p>
   }
 
-  const url = (filename) => `/api/inspections/${inspectionId}/photos/${filename}`
+  const url = (filename) => `/api/inspections/${inspectionId}/${urlBase}/${filename}`
 
   return (
     <>

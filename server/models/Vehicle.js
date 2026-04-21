@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const driveFolderSchema = new mongoose.Schema({
   folderId: String,
   folderName: String,
-  type: { type: String, enum: ['enlistment', 'release'] },
+  type: { type: String, enum: ['enlistment', 'release', 'reserve', 'temporarily_disqualified', 'disqualified'] },
   createdAt: { type: Date, default: Date.now },
 });
 

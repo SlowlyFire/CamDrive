@@ -35,6 +35,8 @@ export default function Share() {
   )
 
   const typeLabel = inspection.type === 'enlistment' ? 'גיוס' : 'שחרור'
+  const isClassified = ['reserve', 'temporarily_disqualified', 'disqualified'].includes(inspection.status)
+  const showDriveLink = (inspection.status === 'approved' || isClassified) && inspection.driveFolderId
 
   return (
     <div className="min-h-screen bg-gray-50" dir="rtl">
@@ -53,6 +55,7 @@ export default function Share() {
 
         {/* Details */}
         <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-2">
+          {inspection.vehicleType && <Row label="סוג כלי" value={inspection.vehicleType} />}
           {inspection.members?.length > 0 && <Row label="צוות" value={inspection.members.join(', ')} />}
           {inspection.location && <Row label="מיקום" value={inspection.location} />}
           {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
@@ -60,30 +63,46 @@ export default function Share() {
           {inspection.notes && <Row label="הערות" value={inspection.notes} />}
         </div>
 
-        {/* Photos / Videos
-              Approved: local files deleted after Drive upload — show Drive folder link only.
-              All other statuses: serve from local disk (supports Range requests for video). */}
-        {inspection.status === 'approved' && inspection.driveFolderId ? (
+        {/* Photos / Documents */}
+        {showDriveLink ? (
           <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
+            <p className="font-bold text-gray-700 mb-3">
+              תמונות וסרטונים ({inspection.photos.length})
+              {inspection.documents?.length > 0 && ` · מסמכים (${inspection.documents.length})`}
+            </p>
             <a
               href={`https://drive.google.com/drive/folders/${inspection.driveFolderId}`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center justify-center gap-2 w-full py-4 bg-blue-50 border-2 border-blue-200 rounded-xl text-blue-800 font-bold text-base active:bg-blue-100"
             >
-              צפה בתמונות בדרייב 📂
+              צפה בתיקייה בדרייב 📂
             </a>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
-            <PhotoGrid
-              photos={inspection.photos}
-              inspectionId={inspection._id}
-              readOnly
-            />
-          </div>
+          <>
+            {inspection.documents?.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <p className="font-bold text-gray-700 mb-3">מסמכים וטפסים ({inspection.documents.length})</p>
+                <PhotoGrid
+                  photos={inspection.documents}
+                  inspectionId={inspection._id}
+                  urlBase="documents"
+                  readOnly
+                />
+              </div>
+            )}
+            {inspection.photos?.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <p className="font-bold text-gray-700 mb-3">תמונות וסרטונים ({inspection.photos.length})</p>
+                <PhotoGrid
+                  photos={inspection.photos}
+                  inspectionId={inspection._id}
+                  readOnly
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -7,7 +7,14 @@ const Inspection = require('../models/Inspection');
 const { requireAuth } = require('../middleware/auth');
 const { requireTeamCode } = require('../middleware/teamAuth');
 const { uploadLimiter } = require('../middleware/rateLimiters');
-const { prepareApprovalFolder, uploadPhotosBatch, getDriveClient } = require('../services/driveService');
+const {
+  prepareApprovalFolder,
+  uploadPhotosBatch,
+  getDriveClient,
+  createFolder,
+  findOrCreateSubfolder,
+  formatDate,
+} = require('../services/driveService');
 const router = express.Router();
 
 const UPLOADS_BASE = path.join(__dirname, '../uploads');
@@ -52,7 +59,7 @@ const tempStorage = multer.diskStorage({
 
 const upload = multer({
   storage: tempStorage,
-  limits: { fileSize: MAX_FILE_SIZE, files: MAX_FILES },
+  limits: { fileSize: MAX_FILE_SIZE, files: MAX_FILES + 50 },
   fileFilter: (req, file, cb) => {
     if (ALLOWED_MIME_TYPES.has(file.mimetype)) cb(null, true);
     else cb(new Error('סוג קובץ לא נתמך — יש להעלות תמונה (jpeg, png, heic, webp) או סרטון (mp4, mov, avi, mkv)'));
@@ -115,8 +122,11 @@ function deleteInspectionFiles(inspectionId) {
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 // POST /api/inspections — create new inspection
-// Body (multipart): photos[] + JSON fields in `data` field
-router.post('/', requireTeamCode, uploadLimiter, upload.array('photos'), async (req, res) => {
+// Body (multipart): photos[] + documents[] + JSON fields in `data` field
+router.post('/', requireTeamCode, uploadLimiter, upload.fields([
+  { name: 'photos', maxCount: MAX_FILES },
+  { name: 'documents', maxCount: 50 },
+]), async (req, res) => {
   try {
     let data = {};
     if (req.body.data) {
@@ -133,13 +143,18 @@ router.post('/', requireTeamCode, uploadLimiter, upload.array('photos'), async (
     if (!data.type || !['enlistment', 'release'].includes(data.type)) {
       return res.status(400).json({ error: 'סוג בחינה לא תקין' });
     }
-    if (!req.files || req.files.length === 0) {
+
+    const photoFiles = (req.files && req.files['photos']) ? req.files['photos'] : [];
+    const documentFiles = (req.files && req.files['documents']) ? req.files['documents'] : [];
+
+    if (photoFiles.length === 0 && documentFiles.length === 0) {
       return res.status(400).json({ error: 'נא להוסיף לפחות תמונה או סרטון אחד' });
     }
 
     // Sanitize
     const licensePlate  = sanitize(data.licensePlate);
     const type          = data.type;
+    const vehicleType   = sanitize(data.vehicleType || '');
     const location      = sanitize(data.location      || '');
     const notes         = sanitize(data.notes         || '');
     const securityCode  = sanitize(data.securityCode  || '');
@@ -152,6 +167,7 @@ router.post('/', requireTeamCode, uploadLimiter, upload.array('photos'), async (
     const inspection = await Inspection.create({
       licensePlate,
       type,
+      vehicleType,
       members,
       location,
       vehicleHours,
@@ -160,19 +176,29 @@ router.post('/', requireTeamCode, uploadLimiter, upload.array('photos'), async (
     });
 
     // Move uploaded files to the inspection's directory
-    if (req.files && req.files.length > 0) {
-      const movedPhotos = moveFilesToInspectionDir(req.files, inspection._id);
+    if (photoFiles.length > 0) {
+      const movedPhotos = moveFilesToInspectionDir(photoFiles, inspection._id);
       inspection.photos.push(...movedPhotos);
+    }
+
+    if (documentFiles.length > 0) {
+      const movedDocs = moveFilesToInspectionDir(documentFiles, inspection._id);
+      inspection.documents.push(...movedDocs);
+    }
+
+    if (photoFiles.length > 0 || documentFiles.length > 0) {
       await inspection.save();
     }
 
     res.status(201).json(inspection);
   } catch (err) {
     // Clean up any uploaded tmp files on error
-    if (req.files) {
-      for (const f of req.files) {
-        fs.unlink(f.path, () => {});
-      }
+    const allFiles = [
+      ...((req.files && req.files['photos']) ? req.files['photos'] : []),
+      ...((req.files && req.files['documents']) ? req.files['documents'] : []),
+    ];
+    for (const f of allFiles) {
+      fs.unlink(f.path, () => {});
     }
     res.status(500).json({ error: err.message });
   }
@@ -215,6 +241,22 @@ router.get('/share/:shareToken', async (req, res) => {
   }
 });
 
+// GET /api/inspections/today — inspections processed today (manager)
+// MUST be before /:id to avoid "today" matching as an ID
+router.get('/today', requireAuth, async (req, res) => {
+  try {
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const end = new Date(); end.setHours(23, 59, 59, 999);
+    const inspections = await Inspection.find({
+      processedAt: { $gte: start, $lte: end },
+      status: { $in: ['approved', 'partially_approved', 'reserve', 'temporarily_disqualified', 'disqualified'] },
+    }).sort({ processedAt: -1 }).select('-photos -documents -failedUploads');
+    res.json(inspections);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/inspections/:id/photos/:filename — serve a photo
 // For pending/rejected: stream from local disk.
 // For approved: proxy from Google Drive using the stored driveFileId.
@@ -247,6 +289,31 @@ router.get('/:id/photos/:filename', async (req, res) => {
         return res.status(404).json({ error: 'קובץ לא נמצא' });
       }
       res.setHeader('Content-Type', mimeForFilename(photo.filename));
+      res.setHeader('Cache-Control', 'no-cache');
+      res.sendFile(filePath);
+    }
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/inspections/:id/documents/:filename — serve a document
+router.get('/:id/documents/:filename', async (req, res) => {
+  try {
+    const inspection = await Inspection.findById(req.params.id);
+    if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
+    const doc = inspection.documents.find((d) => d.filename === req.params.filename);
+    if (!doc) return res.status(404).json({ error: 'מסמך לא נמצא' });
+    if (doc.driveFileId) {
+      const drive = getDriveClient();
+      const driveRes = await drive.files.get({ fileId: doc.driveFileId, alt: 'media' }, { responseType: 'stream' });
+      res.setHeader('Content-Type', mimeForFilename(doc.filename));
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      driveRes.data.pipe(res);
+    } else {
+      const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), doc.filename);
+      if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'קובץ לא נמצא' });
+      res.setHeader('Content-Type', mimeForFilename(doc.filename));
       res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(filePath);
     }
@@ -316,19 +383,17 @@ router.delete('/:id/photos/:photoFilename', requireTeamCode, async (req, res) =>
   }
 });
 
-// POST /api/inspections/:id/approve — atomic 2-phase approval
+// POST /api/inspections/:id/approve — atomic 3-phase approval
 //
-// Phase 1  Create the Drive folder + upsert Vehicle (inside the approval
-//          lock), then immediately persist folderId + status='uploading' to
-//          the DB.  From this point a server crash is fully recoverable:
-//          the manager clicks Approve again and we resume from Phase 2.
+// Phase 1  Create the Drive folder + subfolders + upsert Vehicle (inside the
+//          approval lock), then immediately persist folderId + status='uploading'
+//          to the DB. From this point a server crash is fully recoverable.
 //
-// Phase 2  Upload only the photos that don't yet have a driveFileId.
-//          After every batch of 3 we save the newly acquired driveFileIds
-//          so a mid-upload crash loses at most 3 files' worth of progress.
+// Phase 2a Upload documents to driveDocsFolderId
+// Phase 2b Upload photos to drivePhotosFolderId (falls back to parent folder)
 //
-// Phase 3  All driveFileIds present → status='approved', local files
-//          deleted.  Any still missing → status='partially_approved'.
+// Phase 3  All driveFileIds present → status='approved', processedAt set,
+//          local files deleted. Any still missing → status='partially_approved'.
 //
 // Idempotent: safe to call again after any kind of failure.
 router.post('/:id/approve', requireAuth, async (req, res) => {
@@ -353,25 +418,59 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
       folderName  = prep.folderName;
       letter      = prep.letter;
 
-      // Persist the folder ID and transition to 'uploading' BEFORE we touch
-      // any local files.  If the server crashes after this save, the next
-      // approve call sees folderId set and skips straight to Phase 2.
-      inspection.status       = 'uploading';
-      inspection.driveFolderId = folderId;
-      inspection.vehicleId    = prep.vehicle._id;
+      inspection.status            = 'uploading';
+      inspection.driveFolderId     = folderId;
+      inspection.driveDocsFolderId  = prep.docsFolderId;
+      inspection.drivePhotosFolderId = prep.photosFolderId;
+      inspection.vehicleId         = prep.vehicle._id;
       if (!inspection.approvedAt) inspection.approvedAt = new Date();
       await inspection.save();
+    } else {
+      // Resume: ensure subfolders exist for any unuploaded files
+      const hasUnuploadedDocs = inspection.documents && inspection.documents.some((d) => !d.driveFileId);
+      const hasUnuploadedPhotos = inspection.photos.some((p) => !p.driveFileId);
+
+      if (hasUnuploadedDocs && !inspection.driveDocsFolderId) {
+        const df = await createFolder('מסמכים', folderId);
+        inspection.driveDocsFolderId = df.id;
+        await inspection.save();
+      }
+      if (hasUnuploadedPhotos && !inspection.drivePhotosFolderId) {
+        const pf = await createFolder('תמונות', folderId);
+        inspection.drivePhotosFolderId = pf.id;
+        await inspection.save();
+      }
     }
 
     const localDir = path.join(UPLOADS_BASE, inspection._id.toString());
 
-    // ── Phase 2: Upload only the photos that haven't reached Drive yet ──────
-    // photos[].driveFileId is the canonical source of truth.
-    const photosToUpload = inspection.photos.filter((p) => !p.driveFileId);
+    // ── Phase 2a: Upload documents ──────────────────────────────────────────
+    const docsToUpload = (inspection.documents || []).filter((d) => !d.driveFileId);
+    if (docsToUpload.length > 0 && inspection.driveDocsFolderId) {
+      await uploadPhotosBatch(docsToUpload, localDir, inspection.driveDocsFolderId, 3, async (batchResults) => {
+        let dirty = false;
+        for (const r of batchResults) {
+          if (r.success) {
+            const doc = inspection.documents.find((d) => d.filename === r.filename);
+            if (doc && !doc.driveFileId) {
+              doc.driveFileId = r.driveFileId;
+              dirty = true;
+            }
+          }
+        }
+        if (dirty) {
+          try { await inspection.save(); } catch (saveErr) {
+            console.error('Progress save failed (non-fatal):', saveErr.message);
+          }
+        }
+      });
+    }
 
-    await uploadPhotosBatch(photosToUpload, localDir, folderId, 3, async (batchResults) => {
-      // Persist newly uploaded driveFileIds after every batch so a crash
-      // loses at most one batch (3 files) of progress.
+    // ── Phase 2b: Upload photos ──────────────────────────────────────────────
+    const photosToUpload = inspection.photos.filter((p) => !p.driveFileId);
+    const photoTargetFolder = inspection.drivePhotosFolderId || folderId;
+
+    await uploadPhotosBatch(photosToUpload, localDir, photoTargetFolder, 3, async (batchResults) => {
       let dirty = false;
       for (const r of batchResults) {
         if (r.success) {
@@ -383,33 +482,43 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
         }
       }
       if (dirty) {
-        try {
-          await inspection.save();
-        } catch (saveErr) {
-          // Non-fatal: upload continues. driveFileIds will be saved at end.
+        try { await inspection.save(); } catch (saveErr) {
           console.error('Progress save failed (non-fatal):', saveErr.message);
         }
       }
     });
 
     // ── Phase 3: Set final status ────────────────────────────────────────────
-    const stillMissing = inspection.photos.filter((p) => !p.driveFileId);
+    const stillMissingPhotos = inspection.photos.filter((p) => !p.driveFileId);
+    const stillMissingDocs   = (inspection.documents || []).filter((d) => !d.driveFileId);
 
-    if (stillMissing.length === 0) {
+    if (stillMissingPhotos.length === 0 && stillMissingDocs.length === 0) {
       inspection.status = 'approved';
+      inspection.processedAt = new Date();
       inspection.failedUploads = [];
       await inspection.save();
       deleteInspectionFiles(inspection._id);
     } else {
       inspection.status = 'partially_approved';
-      inspection.failedUploads = stillMissing.map((p) => ({
-        filename:     p.filename,
-        originalName: p.originalName || p.filename,
-        error:        'העלאה נכשלה',
-      }));
+      inspection.processedAt = new Date();
+      inspection.failedUploads = [
+        ...stillMissingPhotos.map((p) => ({
+          filename:     p.filename,
+          originalName: p.originalName || p.filename,
+          error:        'העלאה נכשלה',
+        })),
+        ...stillMissingDocs.map((d) => ({
+          filename:     d.filename,
+          originalName: d.originalName || d.filename,
+          error:        'העלאה נכשלה',
+        })),
+      ];
       // Delete successfully uploaded local files; keep the rest on disk
       for (const photo of inspection.photos.filter((p) => p.driveFileId)) {
         fs.unlink(path.join(localDir, photo.filename), () => {});
+      }
+      for (const doc of (inspection.documents || []).filter((d) => d.driveFileId)) {
+        fs.unlink(path.join(localDir, doc.filename), () => {});
       }
       await inspection.save();
     }
@@ -423,10 +532,10 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('Approval error:', err);
-    // If we crashed before any upload succeeded (all driveFileIds still null),
-    // revert to 'pending' so the manager sees a clean retry state.
     try {
-      if (inspection?.status === 'uploading' && inspection.photos.every((p) => !p.driveFileId)) {
+      if (inspection?.status === 'uploading' &&
+          inspection.photos.every((p) => !p.driveFileId) &&
+          (inspection.documents || []).every((d) => !d.driveFileId)) {
         inspection.status = 'pending';
         await inspection.save();
       }
@@ -436,14 +545,10 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
 });
 
 // POST /api/inspections/:id/retry-uploads — re-upload missing files
-// Uses the same driveFileId-based skip logic as the approve endpoint so
-// it is safe to call multiple times without creating duplicates.
 router.post('/:id/retry-uploads', requireAuth, async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
-    // Accept partially_approved AND uploading (crashed mid-upload) — both
-    // have a driveFolderId and some photos still missing from Drive.
     if (!['partially_approved', 'uploading'].includes(inspection.status)) {
       return res.status(400).json({ error: 'ניתן לנסות שוב רק בחינות שאושרו חלקית או שהעלאתן הופסקה' });
     }
@@ -451,11 +556,35 @@ router.post('/:id/retry-uploads', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'תיקיית Drive לא נמצאה' });
     }
 
-    // Photos without driveFileId are the ones that still need uploading
-    const photosToRetry = inspection.photos.filter((p) => !p.driveFileId);
     const localDir = path.join(UPLOADS_BASE, inspection._id.toString());
 
-    await uploadPhotosBatch(photosToRetry, localDir, inspection.driveFolderId, 3, async (batchResults) => {
+    // Retry documents
+    const docsToRetry = (inspection.documents || []).filter((d) => !d.driveFileId);
+    if (docsToRetry.length > 0) {
+      const docsFolderId = inspection.driveDocsFolderId ||
+        (await createFolder('מסמכים', inspection.driveFolderId)).id;
+      if (!inspection.driveDocsFolderId) {
+        inspection.driveDocsFolderId = docsFolderId;
+        await inspection.save();
+      }
+      await uploadPhotosBatch(docsToRetry, localDir, docsFolderId, 3, async (batchResults) => {
+        let dirty = false;
+        for (const r of batchResults) {
+          if (r.success) {
+            const doc = inspection.documents.find((d) => d.filename === r.filename);
+            if (doc && !doc.driveFileId) { doc.driveFileId = r.driveFileId; dirty = true; }
+          }
+        }
+        if (dirty) {
+          try { await inspection.save(); } catch (e) { console.error('Progress save failed (non-fatal):', e.message); }
+        }
+      });
+    }
+
+    // Retry photos
+    const photosToRetry = inspection.photos.filter((p) => !p.driveFileId);
+    const photoTargetFolder = inspection.drivePhotosFolderId || inspection.driveFolderId;
+    await uploadPhotosBatch(photosToRetry, localDir, photoTargetFolder, 3, async (batchResults) => {
       let dirty = false;
       for (const r of batchResults) {
         if (r.success) {
@@ -468,22 +597,33 @@ router.post('/:id/retry-uploads', requireAuth, async (req, res) => {
       }
     });
 
-    const stillMissing = inspection.photos.filter((p) => !p.driveFileId);
+    const stillMissingPhotos = inspection.photos.filter((p) => !p.driveFileId);
+    const stillMissingDocs   = (inspection.documents || []).filter((d) => !d.driveFileId);
 
-    if (stillMissing.length === 0) {
+    if (stillMissingPhotos.length === 0 && stillMissingDocs.length === 0) {
       inspection.status = 'approved';
+      inspection.processedAt = new Date();
       inspection.failedUploads = [];
       await inspection.save();
       deleteInspectionFiles(inspection._id);
     } else {
-      inspection.failedUploads = stillMissing.map((p) => ({
-        filename:     p.filename,
-        originalName: p.originalName || p.filename,
-        error:        'שגיאה לא ידועה',
-      }));
-      // Delete successfully uploaded local files
+      inspection.failedUploads = [
+        ...stillMissingPhotos.map((p) => ({
+          filename:     p.filename,
+          originalName: p.originalName || p.filename,
+          error:        'שגיאה לא ידועה',
+        })),
+        ...stillMissingDocs.map((d) => ({
+          filename:     d.filename,
+          originalName: d.originalName || d.filename,
+          error:        'שגיאה לא ידועה',
+        })),
+      ];
       for (const photo of inspection.photos.filter((p) => p.driveFileId)) {
         fs.unlink(path.join(localDir, photo.filename), () => {});
+      }
+      for (const doc of (inspection.documents || []).filter((d) => d.driveFileId)) {
+        fs.unlink(path.join(localDir, doc.filename), () => {});
       }
       await inspection.save();
     }
@@ -496,15 +636,15 @@ router.post('/:id/retry-uploads', requireAuth, async (req, res) => {
 });
 
 // GET /api/inspections/:id/download-failed-zip — ZIP of only the failed files
-// Uses photos without driveFileId as the authoritative list of failed files.
 router.get('/:id/download-failed-zip', requireAuth, async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
 
-    // Use per-photo driveFileId as source of truth — photos without it are the failed ones
     const failedPhotos = inspection.photos.filter((p) => !p.driveFileId);
-    if (failedPhotos.length === 0) {
+    const failedDocs   = (inspection.documents || []).filter((d) => !d.driveFileId);
+
+    if (failedPhotos.length === 0 && failedDocs.length === 0) {
       return res.status(400).json({ error: 'אין קבצים שנכשלו' });
     }
 
@@ -521,7 +661,14 @@ router.get('/:id/download-failed-zip', requireAuth, async (req, res) => {
       const archiveName = photo.originalName || photo.filename;
       const filePath = path.join(inspDir, photo.filename);
       if (fs.existsSync(filePath)) {
-        archive.file(filePath, { name: archiveName });
+        archive.file(filePath, { name: `תמונות/${archiveName}` });
+      }
+    }
+    for (const doc of failedDocs) {
+      const archiveName = doc.originalName || doc.filename;
+      const filePath = path.join(inspDir, doc.filename);
+      if (fs.existsSync(filePath)) {
+        archive.file(filePath, { name: `מסמכים/${archiveName}` });
       }
     }
 
@@ -546,23 +693,19 @@ router.post('/:id/reject', requireAuth, async (req, res) => {
     inspection.rejectionReason = reason;
     await inspection.save();
 
-    // Local files are intentionally kept — team members need to see photos
-    // and may resubmit after correction. Files are only removed on approval
-    // (after Drive upload) or on explicit manager delete.
-
     res.json({ success: true, inspection });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/inspections/:id/download-zip — download all photos as ZIP
+// GET /api/inspections/:id/download-zip — download all photos and documents as ZIP
 router.get('/:id/download-zip', async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
-    if (inspection.photos.length === 0) {
-      return res.status(400).json({ error: 'אין תמונות להורדה' });
+    if (inspection.photos.length === 0 && (inspection.documents || []).length === 0) {
+      return res.status(400).json({ error: 'אין קבצים להורדה' });
     }
 
     const zipName = `inspection-${inspection.licensePlate}-${inspection._id}.zip`;
@@ -573,22 +716,39 @@ router.get('/:id/download-zip', async (req, res) => {
     archive.on('error', (err) => { throw err; });
     archive.pipe(res);
 
-    // Use driveFileId per photo as source of truth — works for approved,
-    // partially_approved, pending, and rejected in one pass.
     const drive = getDriveClient();
     const inspDir = path.join(UPLOADS_BASE, inspection._id.toString());
 
+    // Photos in תמונות/ subfolder
     for (const photo of inspection.photos) {
+      const archiveName = `תמונות/${photo.originalName || photo.filename}`;
       if (photo.driveFileId) {
         const streamRes = await drive.files.get(
           { fileId: photo.driveFileId, alt: 'media' },
           { responseType: 'stream' }
         );
-        archive.append(streamRes.data, { name: photo.originalName || photo.filename });
+        archive.append(streamRes.data, { name: archiveName });
       } else {
         const filePath = path.join(inspDir, photo.filename);
         if (fs.existsSync(filePath)) {
-          archive.file(filePath, { name: photo.originalName || photo.filename });
+          archive.file(filePath, { name: archiveName });
+        }
+      }
+    }
+
+    // Documents in מסמכים/ subfolder
+    for (const doc of (inspection.documents || [])) {
+      const archiveName = `מסמכים/${doc.originalName || doc.filename}`;
+      if (doc.driveFileId) {
+        const streamRes = await drive.files.get(
+          { fileId: doc.driveFileId, alt: 'media' },
+          { responseType: 'stream' }
+        );
+        archive.append(streamRes.data, { name: archiveName });
+      } else {
+        const filePath = path.join(inspDir, doc.filename);
+        if (fs.existsSync(filePath)) {
+          archive.file(filePath, { name: archiveName });
         }
       }
     }
@@ -598,6 +758,87 @@ router.get('/:id/download-zip', async (req, res) => {
     if (!res.headersSent) {
       res.status(500).json({ error: err.message });
     }
+  }
+});
+
+// POST /api/inspections/:id/classify — classify inspection as reserve/disqualified
+router.post('/:id/classify', requireAuth, async (req, res) => {
+  const { classification } = req.body;
+  const VALID = ['reserve', 'temporarily_disqualified', 'disqualified'];
+  if (!VALID.includes(classification)) return res.status(400).json({ error: 'סיווג לא תקין' });
+
+  try {
+    const inspection = await Inspection.findById(req.params.id);
+    if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
+    if (!['pending', 'uploading'].includes(inspection.status)) {
+      return res.status(400).json({ error: 'ניתן לסווג רק בחינות ממתינות' });
+    }
+
+    const SECONDARY_FOLDER_ID = process.env.DRIVE_SECONDARY_FOLDER_ID;
+    if (!SECONDARY_FOLDER_ID) return res.status(500).json({ error: 'תיקיית Drive משנית לא מוגדרת' });
+
+    const CLASS_HEBREW = { reserve: 'רזרבה', temporarily_disqualified: 'נפסל זמנית', disqualified: 'נפסל' };
+    const classHebrew = CLASS_HEBREW[classification];
+    const vehicleType = inspection.vehicleType || 'לא ידוע';
+    const dateStr = formatDate(new Date());
+    const folderName = `בחינה לגיוס ${inspection.licensePlate} ${dateStr}`;
+
+    // Create folder hierarchy in secondary Drive: secondary/classification/vehicleType/folder
+    const classFolderId = await findOrCreateSubfolder(classHebrew, SECONDARY_FOLDER_ID);
+    const typeFolderId = await findOrCreateSubfolder(vehicleType, classFolderId);
+    const { id: folderId } = await createFolder(folderName, typeFolderId);
+
+    const localDir = path.join(UPLOADS_BASE, inspection._id.toString());
+
+    // Upload documents to מסמכים subfolder
+    let docResults = [];
+    if (inspection.documents && inspection.documents.length > 0) {
+      const { id: docsFolderId } = await createFolder('מסמכים', folderId);
+      docResults = await uploadPhotosBatch(inspection.documents, localDir, docsFolderId);
+    }
+
+    // Upload photos to תמונות subfolder
+    let photoResults = [];
+    if (inspection.photos && inspection.photos.length > 0) {
+      const { id: photosFolderId } = await createFolder('תמונות', folderId);
+      photoResults = await uploadPhotosBatch(inspection.photos, localDir, photosFolderId);
+    }
+
+    // Apply driveFileIds
+    for (const r of docResults) {
+      if (r.success) {
+        const doc = inspection.documents.find((d) => d.filename === r.filename);
+        if (doc) doc.driveFileId = r.driveFileId;
+      }
+    }
+    for (const r of photoResults) {
+      if (r.success) {
+        const photo = inspection.photos.find((p) => p.filename === r.filename);
+        if (photo) photo.driveFileId = r.driveFileId;
+      }
+    }
+
+    // Update Vehicle record
+    const Vehicle = require('../models/Vehicle');
+    let vehicle = await Vehicle.findOne({ licensePlate: inspection.licensePlate });
+    if (!vehicle) vehicle = new Vehicle({ licensePlate: inspection.licensePlate });
+    vehicle.driveFolders.push({ folderId, folderName, type: classification, createdAt: new Date() });
+    await vehicle.save();
+
+    // Finalize inspection
+    inspection.status = classification;
+    inspection.classification = classification;
+    inspection.classifiedAt = new Date();
+    inspection.processedAt = new Date();
+    inspection.driveFolderId = folderId;
+    await inspection.save();
+
+    deleteInspectionFiles(inspection._id);
+
+    res.json({ success: true, inspection, driveFolderName: folderName });
+  } catch (err) {
+    console.error('Classify error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -643,8 +884,6 @@ router.post('/:id/delete', requireAuth, async (req, res) => {
 });
 
 // ── Multer error handler ───────────────────────────────────────────────────
-// Must be a 4-argument Express error middleware to catch multer errors before
-// they reach the default HTML error handler.
 // eslint-disable-next-line no-unused-vars
 router.use((err, req, res, next) => {
   if (err && err.code === 'LIMIT_FILE_SIZE') {
