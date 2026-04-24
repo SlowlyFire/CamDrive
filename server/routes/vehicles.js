@@ -11,8 +11,7 @@ router.get('/:plate', async (req, res) => {
 
     // Fetch all inspections for this plate regardless of whether vehicle doc exists
     const inspections = await Inspection.find({ licensePlate: plate })
-      .sort({ createdAt: -1 })
-      .select('-photos'); // photos list can be large; omit here
+      .sort({ createdAt: -1 });
 
     if (!vehicle) {
       return res.json({ vehicle: null, inspections });

@@ -474,6 +474,32 @@ router.delete('/:id/documents/:docFilename', requireTeamCode, async (req, res) =
   }
 });
 
+// PUT /api/inspections/:id/text — edit text fields (pending or rejected)
+router.put('/:id/text', requireTeamCode, async (req, res) => {
+  try {
+    const inspection = await Inspection.findById(req.params.id);
+    if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
+    if (!['pending', 'rejected'].includes(inspection.status)) {
+      return res.status(400).json({ error: 'ניתן לערוך רק בחינות ממתינות או שנדחו' });
+    }
+
+    const { notes, location, vehicleHours, securityCode } = req.body;
+
+    if (location !== undefined) inspection.location = sanitize(String(location || '')).slice(0, 200);
+    if (notes !== undefined) inspection.notes = sanitize(String(notes || '')).slice(0, 2000);
+    if (securityCode !== undefined) inspection.securityCode = sanitize(String(securityCode || '')).slice(0, 50);
+    if (vehicleHours !== undefined) {
+      const h = vehicleHours === '' || vehicleHours === null ? null : Number(vehicleHours);
+      inspection.vehicleHours = (!isNaN(h) && h >= 0) ? h : inspection.vehicleHours;
+    }
+
+    await inspection.save();
+    res.json(inspection);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/inspections/:id/approve — atomic 3-phase approval
 //
 // Phase 1  Create the Drive folder + subfolders + upsert Vehicle (inside the
@@ -517,20 +543,17 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
       if (!inspection.approvedAt) inspection.approvedAt = new Date();
       await inspection.save();
     } else {
-      // Resume: ensure subfolders exist for any unuploaded files
-      const hasUnuploadedDocs = inspection.documents && inspection.documents.some((d) => !d.driveFileId);
-      const hasUnuploadedPhotos = inspection.photos.some((p) => !p.driveFileId);
-
-      if (hasUnuploadedDocs && !inspection.driveDocsFolderId) {
-        const df = await createFolder('מסמכים', folderId);
-        inspection.driveDocsFolderId = df.id;
-        await inspection.save();
+      // Resume: use main folder directly (flat structure — no subfolders)
+      let dirty = false;
+      if (!inspection.driveDocsFolderId) {
+        inspection.driveDocsFolderId = folderId;
+        dirty = true;
       }
-      if (hasUnuploadedPhotos && !inspection.drivePhotosFolderId) {
-        const pf = await createFolder('תמונות', folderId);
-        inspection.drivePhotosFolderId = pf.id;
-        await inspection.save();
+      if (!inspection.drivePhotosFolderId) {
+        inspection.drivePhotosFolderId = folderId;
+        dirty = true;
       }
+      if (dirty) await inspection.save();
     }
 
     const localDir = path.join(UPLOADS_BASE, inspection._id.toString());
@@ -812,9 +835,9 @@ router.get('/:id/download-zip', async (req, res) => {
     const drive = getDriveClient();
     const inspDir = path.join(UPLOADS_BASE, inspection._id.toString());
 
-    // Photos in תמונות/ subfolder
+    // All files flat in the ZIP (no subfolders)
     for (const photo of inspection.photos) {
-      const archiveName = `תמונות/${photo.originalName || photo.filename}`;
+      const archiveName = photo.originalName || photo.filename;
       if (photo.driveFileId) {
         const streamRes = await drive.files.get(
           { fileId: photo.driveFileId, alt: 'media' },
@@ -829,9 +852,8 @@ router.get('/:id/download-zip', async (req, res) => {
       }
     }
 
-    // Documents in מסמכים/ subfolder
     for (const doc of (inspection.documents || [])) {
-      const archiveName = `מסמכים/${doc.originalName || doc.filename}`;
+      const archiveName = doc.originalName || doc.filename;
       if (doc.driveFileId) {
         const streamRes = await drive.files.get(
           { fileId: doc.driveFileId, alt: 'media' },
@@ -883,18 +905,15 @@ router.post('/:id/classify', requireAuth, async (req, res) => {
 
     const localDir = path.join(UPLOADS_BASE, inspection._id.toString());
 
-    // Upload documents to מסמכים subfolder
+    // Upload all files (documents + photos) directly into the inspection folder (flat structure)
     let docResults = [];
     if (inspection.documents && inspection.documents.length > 0) {
-      const { id: docsFolderId } = await createFolder('מסמכים', folderId);
-      docResults = await uploadPhotosBatch(inspection.documents, localDir, docsFolderId);
+      docResults = await uploadPhotosBatch(inspection.documents, localDir, folderId);
     }
 
-    // Upload photos to תמונות subfolder
     let photoResults = [];
     if (inspection.photos && inspection.photos.length > 0) {
-      const { id: photosFolderId } = await createFolder('תמונות', folderId);
-      photoResults = await uploadPhotosBatch(inspection.photos, localDir, photosFolderId);
+      photoResults = await uploadPhotosBatch(inspection.photos, localDir, folderId);
     }
 
     // Apply driveFileIds

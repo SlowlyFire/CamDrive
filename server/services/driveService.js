@@ -324,17 +324,9 @@ async function prepareApprovalFolder(inspection) {
     const folderName = `${typeHebrew} ${licensePlate}-${letter} ${dateStr}`;
     const { id: folderId } = await createFolder(folderName, DRIVE_ROOT_FOLDER_ID);
 
-    // Create subfolders for documents and photos/videos
-    let docsFolderId = null;
-    let photosFolderId = null;
-    if (inspection.documents && inspection.documents.length > 0) {
-      const df = await createFolder('מסמכים', folderId);
-      docsFolderId = df.id;
-    }
-    if (inspection.photos && inspection.photos.length > 0) {
-      const pf = await createFolder('תמונות', folderId);
-      photosFolderId = pf.id;
-    }
+    // All files (documents + photos/videos) go directly into the inspection folder (flat structure)
+    const docsFolderId = folderId;
+    const photosFolderId = folderId;
 
     let vehicle = await Vehicle.findOne({ licensePlate });
     if (!vehicle) vehicle = new Vehicle({ licensePlate });
