@@ -149,6 +149,8 @@ export default function InspectionDetail() {
   const isUploading = inspection.status === 'uploading'
   const isPartiallyApproved = inspection.status === 'partially_approved'
   const isClassified = ['reserve', 'temporarily_disqualified', 'disqualified'].includes(inspection.status)
+  const isApproved = inspection.status === 'approved'
+  const isApprovedOrClassified = isApproved || isClassified
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col" dir="rtl">
@@ -309,29 +311,29 @@ export default function InspectionDetail() {
           )
         })()}
 
-        {/* Actions */}
-        <div className="flex gap-2">
-          <button
-            onClick={copyShareLink}
-            className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm"
-          >
-            🔗 שתף
-          </button>
-          {(inspection.status === 'approved' || inspection.status === 'partially_approved') && (
+        {/* Actions — hidden for approved / classified (Drive link shown in photos section) */}
+        {!isApprovedOrClassified && (
+          <div className="flex gap-2">
+            <button
+              onClick={copyShareLink}
+              className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm"
+            >
+              🔗 שתף
+            </button>
             <button
               onClick={downloadZip}
               className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm"
             >
               📥 ZIP
             </button>
-          )}
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="py-3 px-4 bg-red-100 text-red-700 font-bold rounded-xl text-sm"
-          >
-            🗑️
-          </button>
-        </div>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="py-3 px-4 bg-red-100 text-red-700 font-bold rounded-xl text-sm"
+            >
+              🗑️
+            </button>
+          </div>
+        )}
 
         {/* Delete confirmation */}
         {showDeleteConfirm && (

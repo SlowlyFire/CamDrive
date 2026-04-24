@@ -17,6 +17,11 @@ export default function InspectionView() {
   const [resubmitting, setResubmitting] = useState(false)
   const [error, setError] = useState('')
 
+  // Edit mode state
+  const [isEditing, setIsEditing] = useState(false)
+  const [editForm, setEditForm] = useState({})
+  const [saving, setSaving] = useState(false)
+
   useEffect(() => {
     load()
   }, [id])
@@ -30,6 +35,41 @@ export default function InspectionView() {
       setError('לא ניתן לטעון את הבחינה')
     } finally {
       setLoading(false)
+    }
+  }
+
+  function startEdit() {
+    setEditForm({
+      notes: inspection.notes || '',
+      location: inspection.location || '',
+      vehicleHours: inspection.vehicleHours != null ? String(inspection.vehicleHours) : '',
+      securityCode: inspection.securityCode || '',
+    })
+    setIsEditing(true)
+    setError('')
+  }
+
+  function cancelEdit() {
+    setIsEditing(false)
+    setError('')
+  }
+
+  async function saveText() {
+    setSaving(true)
+    setError('')
+    try {
+      const r = await api.put(`/inspections/${id}/text`, {
+        notes: editForm.notes,
+        location: editForm.location,
+        vehicleHours: editForm.vehicleHours,
+        securityCode: editForm.securityCode,
+      })
+      setInspection(r.data)
+      setIsEditing(false)
+    } catch (err) {
+      setError(err.response?.data?.error || 'שגיאה בשמירה')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -114,9 +154,28 @@ export default function InspectionView() {
   const isEditable = isPending || isRejected
   const typeLabel = inspection.type === 'enlistment' ? 'גיוס' : 'שחרור'
 
+  const editAction = isEditable ? (
+    isEditing ? (
+      <button
+        onClick={cancelEdit}
+        className="text-blue-200 text-sm font-bold px-2 py-1"
+      >
+        ביטול
+      </button>
+    ) : (
+      <button
+        onClick={startEdit}
+        className="text-white text-lg px-1"
+        aria-label="ערוך פרטים"
+      >
+        ✏️
+      </button>
+    )
+  ) : null
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col" dir="rtl">
-      <TopBar title={`${typeLabel} — ${inspection.licensePlate}`} back="/team/pending" />
+      <TopBar title={`${typeLabel} — ${inspection.licensePlate}`} back="/team/pending" action={editAction} />
 
       <div className="flex-1 p-4 flex flex-col gap-4 pb-8">
         {/* Rejection banner */}
@@ -136,16 +195,77 @@ export default function InspectionView() {
           <StatusBadge status={inspection.status} />
         </div>
 
-        {/* Details */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-2">
-          {inspection.members?.length > 0 && (
-            <Row label="צוות" value={inspection.members.join(', ')} />
-          )}
-          {inspection.location && <Row label="מיקום" value={inspection.location} />}
-          {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
-          {inspection.securityCode && <Row label="קודן" value={inspection.securityCode} />}
-          {inspection.notes && <Row label="הערות" value={inspection.notes} />}
-        </div>
+        {/* Details — view or edit mode */}
+        {isEditing ? (
+          <div className="bg-white rounded-xl border-2 border-blue-300 p-4 flex flex-col gap-3">
+            <p className="font-bold text-blue-900 text-sm mb-1">עריכת פרטים</p>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1">מיקום</label>
+              <input
+                type="text"
+                value={editForm.location}
+                onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
+                placeholder="שם הבסיס / מיקום"
+                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1">שע״מ</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                value={editForm.vehicleHours}
+                onChange={(e) => setEditForm((f) => ({ ...f, vehicleHours: e.target.value }))}
+                placeholder="שעות מנוע"
+                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1">קודן / קוד מיגון</label>
+              <input
+                type="text"
+                value={editForm.securityCode}
+                onChange={(e) => setEditForm((f) => ({ ...f, securityCode: e.target.value }))}
+                placeholder="קוד מיגון"
+                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1">הערות / תקלות</label>
+              <textarea
+                value={editForm.notes}
+                onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
+                rows={3}
+                placeholder="פרט תקלות, מצב הרכב..."
+                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none resize-none"
+              />
+            </div>
+
+            {error && <p className="text-red-600 text-sm">{error}</p>}
+
+            <button
+              onClick={saveText}
+              disabled={saving}
+              className="w-full py-3 bg-blue-900 text-white font-black rounded-xl disabled:opacity-50"
+            >
+              {saving ? <Spinner size={4} /> : 'שמור שינויים'}
+            </button>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-2">
+            {inspection.members?.length > 0 && (
+              <Row label="צוות" value={inspection.members.join(', ')} />
+            )}
+            {inspection.location && <Row label="מיקום" value={inspection.location} />}
+            {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
+            {inspection.securityCode && <Row label="קודן" value={inspection.securityCode} />}
+            {inspection.notes && <Row label="הערות" value={inspection.notes} />}
+          </div>
+        )}
 
         {/* Documents */}
         {(isEditable || (inspection.documents?.length > 0)) && (
@@ -203,7 +323,7 @@ export default function InspectionView() {
           </button>
         )}
 
-        {error && <p className="text-red-600 text-sm">{error}</p>}
+        {!isEditing && error && <p className="text-red-600 text-sm">{error}</p>}
       </div>
     </div>
   )
