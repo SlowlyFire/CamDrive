@@ -6,8 +6,6 @@ import PhotoUploader from '../../components/PhotoUploader'
 import Spinner from '../../components/Spinner'
 import { isVideoFile } from '../../utils/imageUtils'
 
-const CHUNK_SIZE = 5 * 1024 * 1024 // 5 MB
-
 function VideoPreview({ src, name }) {
   const [failed, setFailed] = useState(false)
   if (failed) {
@@ -34,46 +32,34 @@ function VideoPreview({ src, name }) {
   )
 }
 
-async function uploadChunked(file, onProgress) {
-  const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
-  const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+/**
+ * Upload a single file directly to R2 via a presigned PUT URL.
+ * Returns { r2Key, originalName }.
+ */
+async function uploadToR2(file, onProgress) {
+  // 1. Get presigned URL from server
+  const { data } = await api.get('/upload/presign', {
+    params: { filename: file.name, contentType: file.type || 'application/octet-stream' },
+  })
+  const { url, key } = data
 
-  for (let i = 0; i < totalChunks; i++) {
-    const start = i * CHUNK_SIZE
-    const end = Math.min(start + CHUNK_SIZE, file.size)
-    const chunk = file.slice(start, end)
-
-    let lastErr
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const fd = new FormData()
-        fd.append('uploadId', uploadId)
-        fd.append('chunkIndex', String(i))
-        fd.append('totalChunks', String(totalChunks))
-        fd.append('originalName', file.name)
-        fd.append('chunk', chunk, file.name)
-
-        const r = await api.post('/upload/chunk', fd, {
-          onUploadProgress: (e) => {
-            const chunkFraction = e.total ? e.loaded / e.total : 1
-            onProgress(Math.round(((i + chunkFraction) / totalChunks) * 100))
-          },
-        })
-
-        if (r.data.done) {
-          onProgress(100)
-          return { filename: r.data.filename, originalName: r.data.originalName || file.name }
-        }
-        break // chunk accepted, not last chunk yet
-      } catch (err) {
-        lastErr = err
-        if (attempt < 2) await new Promise((res) => setTimeout(res, 1000 * (attempt + 1)))
-      }
+  // 2. PUT file directly to R2 (XHR for upload progress)
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', url)
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
     }
-    if (lastErr && i === totalChunks - 1) throw lastErr
-  }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve()
+      else reject(new Error(`R2 upload failed: ${xhr.status}`))
+    }
+    xhr.onerror = () => reject(new Error('Network error during upload'))
+    xhr.send(file)
+  })
 
-  throw new Error('העלאה לא הושלמה')
+  return { r2Key: key, originalName: file.name }
 }
 
 export default function NewInspection() {
@@ -92,11 +78,11 @@ export default function NewInspection() {
     notes: '',
     securityCode: '',
   })
-  const [photos, setPhotos] = useState([]) // { file, preview }
+  const [photos, setPhotos] = useState([])    // { file, preview }
   const [documents, setDocuments] = useState([]) // { file, preview }
   const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [uploadStatus, setUploadStatus] = useState('') // e.g. "מעלה קובץ 1/3..."
+  const [uploadStatus, setUploadStatus] = useState('')
   const [done, setDone] = useState(false)
   const [fieldErrors, setFieldErrors] = useState({})
 
@@ -152,11 +138,7 @@ export default function NewInspection() {
     if (!form.vehicleType) errors.vehicleType = 'שדה חובה'
     if (form.members.length === 0) errors.members = 'שדה חובה'
     if (photos.length === 0) errors.photos = 'שדה חובה'
-
-    if (Object.keys(errors).length > 0) {
-      setFieldErrors(errors)
-      return
-    }
+    if (Object.keys(errors).length > 0) { setFieldErrors(errors); return }
 
     setFieldErrors({})
     setSubmitting(true)
@@ -164,63 +146,49 @@ export default function NewInspection() {
     setUploadStatus('')
 
     try {
-      // Separate large and small files
-      const largePhotos = photos.filter((p) => p.file.size >= CHUNK_SIZE)
-      const smallPhotos = photos.filter((p) => p.file.size < CHUNK_SIZE)
-      const largeDocs = documents.filter((d) => d.file.size >= CHUNK_SIZE)
-      const smallDocs = documents.filter((d) => d.file.size < CHUNK_SIZE)
+      const allFiles = [
+        ...photos.map((p) => ({ file: p.file, type: 'photo' })),
+        ...documents.map((d) => ({ file: d.file, type: 'document' })),
+      ]
 
-      const preuploadedPhotos = []
-      const preuploadedDocuments = []
+      const uploadedPhotos = []
+      const uploadedDocuments = []
 
-      const totalLarge = largePhotos.length + largeDocs.length
-      let uploadedCount = 0
+      // Upload all files directly to R2 with per-file progress and 3 retries
+      for (let i = 0; i < allFiles.length; i++) {
+        const { file, type } = allFiles[i]
+        setUploadStatus(`מעלה קובץ ${i + 1} מתוך ${allFiles.length}…`)
 
-      // Pre-upload large photos via chunks
-      for (const p of largePhotos) {
-        uploadedCount++
-        setUploadStatus(`מעלה קובץ ${uploadedCount}/${totalLarge}…`)
-        const result = await uploadChunked(p.file, (pct) => {
-          setProgress(Math.round(((uploadedCount - 1 + pct / 100) / Math.max(totalLarge, 1)) * 80))
-        })
-        preuploadedPhotos.push(result)
+        let result
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            result = await uploadToR2(file, (pct) => {
+              const base = i / allFiles.length
+              const range = 1 / allFiles.length
+              setProgress(Math.round((base + (range * pct) / 100) * 90))
+            })
+            break
+          } catch (err) {
+            if (attempt === 2) throw err
+            await new Promise((res) => setTimeout(res, 1000 * (attempt + 1)))
+          }
+        }
+
+        if (type === 'photo') uploadedPhotos.push(result)
+        else uploadedDocuments.push(result)
       }
 
-      // Pre-upload large documents via chunks
-      for (const d of largeDocs) {
-        uploadedCount++
-        setUploadStatus(`מעלה קובץ ${uploadedCount}/${totalLarge}…`)
-        const result = await uploadChunked(d.file, (pct) => {
-          setProgress(Math.round(((uploadedCount - 1 + pct / 100) / Math.max(totalLarge, 1)) * 80))
-        })
-        preuploadedDocuments.push(result)
-      }
+      setProgress(92)
+      setUploadStatus('שולח בחינה…')
 
-      if (totalLarge > 0) {
-        setProgress(80)
-        setUploadStatus('שולח בחינה…')
-      }
-
-      // Build final FormData with small files + preuploaded references
-      const fd = new FormData()
-      fd.append('data', JSON.stringify({
+      // POST metadata (JSON — no files, all already in R2)
+      await api.post('/inspections', {
         ...form,
         vehicleHours: form.vehicleHours ? Number(form.vehicleHours) : null,
-        preuploadedPhotos,
-        preuploadedDocuments,
-      }))
-      smallPhotos.forEach((p) => fd.append('photos', p.file))
-      smallDocs.forEach((d) => fd.append('documents', d.file))
-
-      await api.post('/inspections', fd, {
-        onUploadProgress: (e) => {
-          const base = totalLarge > 0 ? 80 : 0
-          const range = 100 - base
-          setProgress(base + Math.round((e.total ? e.loaded / e.total : 1) * range))
-        },
+        photos: uploadedPhotos,
+        documents: uploadedDocuments,
       })
 
-      // Cleanup previews
       photos.forEach((p) => URL.revokeObjectURL(p.preview))
       documents.forEach((d) => URL.revokeObjectURL(d.preview))
       setDone(true)
@@ -269,7 +237,7 @@ export default function NewInspection() {
             }}
             placeholder="למשל: 181398"
             className={`w-full border-2 rounded-xl px-4 py-3 text-lg font-mono focus:outline-none ${
-              fieldErrors.licensePlate ? 'border-red-500 focus:border-red-500' : 'border-gray-300 focus:border-blue-900'
+              fieldErrors.licensePlate ? 'border-red-500' : 'border-gray-300 focus:border-blue-900'
             }`}
           />
         </div>
@@ -287,7 +255,7 @@ export default function NewInspection() {
               setFieldErrors((err) => ({ ...err, vehicleType: undefined }))
             }}
             className={`w-full border-2 rounded-xl px-4 py-3 text-lg focus:outline-none bg-white ${
-              fieldErrors.vehicleType ? 'border-red-500 focus:border-red-500' : 'border-gray-300 focus:border-blue-900'
+              fieldErrors.vehicleType ? 'border-red-500' : 'border-gray-300 focus:border-blue-900'
             }`}
           >
             <option value="">בחר סוג כלי...</option>
@@ -394,25 +362,15 @@ export default function NewInspection() {
           <label className="block text-sm font-bold text-gray-700 mb-2">מסמכים וטפסים ({documents.length})</label>
           <label className="flex items-center justify-center gap-2 w-full py-3 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer bg-white active:bg-gray-50 text-gray-600 font-semibold text-sm">
             <span>📄 הוסף מסמכים</span>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={addDocuments}
-              disabled={submitting}
-            />
+            <input type="file" accept="image/*" multiple className="hidden" onChange={addDocuments} disabled={submitting} />
           </label>
           {documents.length > 0 && (
             <div className="grid grid-cols-4 gap-1 mt-2">
               {documents.map((d, i) => (
                 <div key={i} className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden">
                   <img src={d.preview} className="w-full h-full object-cover" alt="" />
-                  <button
-                    type="button"
-                    onClick={() => removeDocument(i)}
-                    className="absolute top-0.5 left-0.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
-                  >×</button>
+                  <button type="button" onClick={() => removeDocument(i)}
+                    className="absolute top-0.5 left-0.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">×</button>
                 </div>
               ))}
             </div>
@@ -435,13 +393,10 @@ export default function NewInspection() {
                   {isVideoFile(p.file) ? (
                     <VideoPreview src={p.preview} name={p.file.name} />
                   ) : (
-                    <img src={p.preview} className="w-full h-full object-cover" />
+                    <img src={p.preview} className="w-full h-full object-cover" alt="" />
                   )}
-                  <button
-                    type="button"
-                    onClick={() => removePhoto(i)}
-                    className="absolute top-0.5 left-0.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
-                  >×</button>
+                  <button type="button" onClick={() => removePhoto(i)}
+                    className="absolute top-0.5 left-0.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">×</button>
                 </div>
               ))}
             </div>
@@ -454,10 +409,7 @@ export default function NewInspection() {
           <div className="flex flex-col gap-2">
             {uploadStatus && <p className="text-sm text-gray-600 text-center font-semibold">{uploadStatus}</p>}
             <div className="w-full bg-gray-200 rounded-full h-3">
-              <div
-                className="bg-blue-900 h-3 rounded-full transition-all"
-                style={{ width: `${progress}%` }}
-              />
+              <div className="bg-blue-900 h-3 rounded-full transition-all" style={{ width: `${progress}%` }} />
             </div>
             <p className="text-xs text-gray-500 text-center">{progress}%</p>
           </div>
@@ -468,7 +420,9 @@ export default function NewInspection() {
           disabled={submitting}
           className="w-full py-4 bg-blue-900 text-white font-black text-xl rounded-xl disabled:opacity-50 mt-2"
         >
-          {submitting ? <span className="flex items-center justify-center gap-2"><Spinner size={5} /> שולח…</span> : 'שלח בחינה'}
+          {submitting
+            ? <span className="flex items-center justify-center gap-2"><Spinner size={5} /> שולח…</span>
+            : 'שלח בחינה'}
         </button>
       </form>
     </div>

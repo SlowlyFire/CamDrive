@@ -122,18 +122,11 @@ function deleteInspectionFiles(inspectionId) {
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 // POST /api/inspections — create new inspection
-// Body (multipart): photos[] + documents[] + JSON fields in `data` field
-router.post('/', requireTeamCode, uploadLimiter, upload.fields([
-  { name: 'photos', maxCount: MAX_FILES },
-  { name: 'documents', maxCount: 50 },
-]), async (req, res) => {
+// Body (JSON): form fields + photos:[{r2Key,originalName}] + documents:[{r2Key,originalName}]
+// Files are pre-uploaded directly to R2 by the client via presigned URLs.
+router.post('/', requireTeamCode, uploadLimiter, async (req, res) => {
   try {
-    let data = {};
-    if (req.body.data) {
-      data = JSON.parse(req.body.data);
-    } else {
-      data = req.body;
-    }
+    const data = req.body;
 
     // Validate
     const validationErrors = validateInspectionData(data);
@@ -144,104 +137,49 @@ router.post('/', requireTeamCode, uploadLimiter, upload.fields([
       return res.status(400).json({ error: 'סוג בחינה לא תקין' });
     }
 
-    const photoFiles = (req.files && req.files['photos']) ? req.files['photos'] : [];
-    const documentFiles = (req.files && req.files['documents']) ? req.files['documents'] : [];
+    const r2Photos    = Array.isArray(data.photos)    ? data.photos    : [];
+    const r2Documents = Array.isArray(data.documents) ? data.documents : [];
 
-    // References to files pre-uploaded via chunked upload
-    const preuploadedPhotos = Array.isArray(data.preuploadedPhotos) ? data.preuploadedPhotos : [];
-    const preuploadedDocuments = Array.isArray(data.preuploadedDocuments) ? data.preuploadedDocuments : [];
-
-    if (photoFiles.length === 0 && documentFiles.length === 0 &&
-        preuploadedPhotos.length === 0 && preuploadedDocuments.length === 0) {
+    if (r2Photos.length === 0) {
       return res.status(400).json({ error: 'נא להוסיף לפחות תמונה או סרטון אחד' });
     }
 
     // Sanitize
-    const licensePlate  = sanitize(data.licensePlate);
-    const type          = data.type;
-    const vehicleType   = sanitize(data.vehicleType || '');
-    const location      = sanitize(data.location      || '');
-    const notes         = sanitize(data.notes         || '');
-    const securityCode  = sanitize(data.securityCode  || '');
-    const vehicleHours  = data.vehicleHours != null ? Number(data.vehicleHours) : null;
-    const rawMembers    = data.members;
-    const members       = (Array.isArray(rawMembers) ? rawMembers : rawMembers ? [rawMembers] : [])
-                            .map(sanitize)
-                            .filter((m) => m.length > 0 && m.length <= 50);
+    const licensePlate = sanitize(data.licensePlate);
+    const type         = data.type;
+    const vehicleType  = sanitize(data.vehicleType  || '');
+    const location     = sanitize(data.location     || '');
+    const notes        = sanitize(data.notes        || '');
+    const securityCode = sanitize(data.securityCode || '');
+    const vehicleHours = data.vehicleHours != null ? Number(data.vehicleHours) : null;
+    const rawMembers   = data.members;
+    const members      = (Array.isArray(rawMembers) ? rawMembers : rawMembers ? [rawMembers] : [])
+                           .map(sanitize)
+                           .filter((m) => m.length > 0 && m.length <= 50);
 
     const inspection = await Inspection.create({
-      licensePlate,
-      type,
-      vehicleType,
-      members,
-      location,
-      vehicleHours,
-      notes,
-      securityCode,
+      licensePlate, type, vehicleType, members,
+      location, vehicleHours, notes, securityCode,
     });
 
-    // Move uploaded files to the inspection's directory
-    if (photoFiles.length > 0) {
-      const movedPhotos = moveFilesToInspectionDir(photoFiles, inspection._id);
-      inspection.photos.push(...movedPhotos);
+    // Register R2-uploaded photos
+    for (const p of r2Photos) {
+      if (!p.r2Key) continue;
+      const filename = path.basename(p.r2Key);
+      inspection.photos.push({ filename, originalName: p.originalName || filename, r2Key: p.r2Key });
     }
 
-    if (documentFiles.length > 0) {
-      const movedDocs = moveFilesToInspectionDir(documentFiles, inspection._id);
-      inspection.documents.push(...movedDocs);
+    // Register R2-uploaded documents
+    for (const d of r2Documents) {
+      if (!d.r2Key) continue;
+      const filename = path.basename(d.r2Key);
+      inspection.documents.push({ filename, originalName: d.originalName || filename, r2Key: d.r2Key });
     }
 
-    // Move pre-uploaded (chunked) photos from _tmp to inspection dir
-    if (preuploadedPhotos.length > 0) {
-      const dest = path.join(UPLOADS_BASE, inspection._id.toString());
-      fs.mkdirSync(dest, { recursive: true });
-      for (const f of preuploadedPhotos) {
-        const safeFilename = path.basename(f.filename || '');
-        if (!safeFilename) continue;
-        const srcPath = path.join(UPLOADS_BASE, '_tmp', safeFilename);
-        if (fs.existsSync(srcPath)) {
-          fs.renameSync(srcPath, path.join(dest, safeFilename));
-          inspection.photos.push({
-            filename: safeFilename,
-            originalName: f.originalName || safeFilename,
-          });
-        }
-      }
-    }
-
-    // Move pre-uploaded (chunked) documents from _tmp to inspection dir
-    if (preuploadedDocuments.length > 0) {
-      const dest = path.join(UPLOADS_BASE, inspection._id.toString());
-      fs.mkdirSync(dest, { recursive: true });
-      for (const f of preuploadedDocuments) {
-        const safeFilename = path.basename(f.filename || '');
-        if (!safeFilename) continue;
-        const srcPath = path.join(UPLOADS_BASE, '_tmp', safeFilename);
-        if (fs.existsSync(srcPath)) {
-          fs.renameSync(srcPath, path.join(dest, safeFilename));
-          inspection.documents.push({
-            filename: safeFilename,
-            originalName: f.originalName || safeFilename,
-          });
-        }
-      }
-    }
-
-    if (photoFiles.length > 0 || documentFiles.length > 0 ||
-        preuploadedPhotos.length > 0 || preuploadedDocuments.length > 0) {
-      await inspection.save();
-    }
+    if (r2Photos.length > 0 || r2Documents.length > 0) await inspection.save();
 
     res.status(201).json(inspection);
   } catch (err) {
-    // Clean up any uploaded tmp files on error
-    const allFiles = [
-      ...((req.files && req.files['photos']) ? req.files['photos'] : []),
-      ...((req.files && req.files['documents']) ? req.files['documents'] : []),
-    ];
-    for (const f of allFiles) {
-      fs.unlink(f.path, () => {});
-    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -311,7 +249,7 @@ router.get('/:id/photos/:filename', async (req, res) => {
     if (!photo) return res.status(404).json({ error: 'תמונה לא נמצאה' });
 
     if (photo.driveFileId) {
-      // Serve from Drive — works for approved and partially_approved
+      // Serve from Drive — approved / partially_approved
       const drive = getDriveClient();
       const driveRes = await drive.files.get(
         { fileId: photo.driveFileId, alt: 'media' },
@@ -320,12 +258,13 @@ router.get('/:id/photos/:filename', async (req, res) => {
       res.setHeader('Content-Type', mimeForFilename(photo.filename));
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       driveRes.data.pipe(res);
+    } else if (photo.r2Key) {
+      // Serve from R2 via presigned redirect (pending / rejected)
+      const { getPresignedGetUrl } = require('../services/r2Service');
+      const url = await getPresignedGetUrl(photo.r2Key, 3600);
+      return res.redirect(302, url);
     } else {
-      // Serve from local disk — pending, rejected, or partially_approved (failed files).
-      // Set Content-Type explicitly so the browser treats .mov / .mp4 as video
-      // (Express's auto-detection can mis-identify QuickTime files).
-      // res.sendFile handles Range requests (206 Partial Content) so video
-      // seeking works correctly.
+      // Legacy: local disk fallback (files uploaded before R2 migration)
       const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), photo.filename);
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'קובץ לא נמצא' });
@@ -352,6 +291,10 @@ router.get('/:id/documents/:filename', async (req, res) => {
       res.setHeader('Content-Type', mimeForFilename(doc.filename));
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       driveRes.data.pipe(res);
+    } else if (doc.r2Key) {
+      const { getPresignedGetUrl } = require('../services/r2Service');
+      const url = await getPresignedGetUrl(doc.r2Key, 3600);
+      return res.redirect(302, url);
     } else {
       const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), doc.filename);
       if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'קובץ לא נמצא' });
@@ -376,6 +319,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // PUT /api/inspections/:id/photos — add more photos (pending or rejected)
+// Receives files via multipart; uploads each to R2; saves r2Key in MongoDB.
 router.put('/:id/photos', requireTeamCode, uploadLimiter, upload.array('photos'), async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
@@ -385,16 +329,28 @@ router.put('/:id/photos', requireTeamCode, uploadLimiter, upload.array('photos')
     }
 
     if (req.files && req.files.length > 0) {
-      const movedPhotos = moveFilesToInspectionDir(req.files, inspection._id);
-      inspection.photos.push(...movedPhotos);
+      const { uploadLocalFile } = require('../services/r2Service');
+      for (const file of req.files) {
+        const ext = path.extname(file.originalname) || path.extname(file.filename);
+        const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const r2Key = `pending/${unique}${ext}`;
+        try {
+          await uploadLocalFile(r2Key, file.path, file.mimetype);
+          inspection.photos.push({
+            filename: path.basename(r2Key),
+            originalName: file.originalname,
+            r2Key,
+          });
+        } finally {
+          fs.unlink(file.path, () => {});
+        }
+      }
       await inspection.save();
     }
 
     res.json(inspection);
   } catch (err) {
-    if (req.files) {
-      for (const f of req.files) fs.unlink(f.path, () => {});
-    }
+    if (req.files) for (const f of req.files) fs.unlink(f.path, () => {});
     res.status(500).json({ error: err.message });
   }
 });
@@ -412,12 +368,18 @@ router.delete('/:id/photos/:photoFilename', requireTeamCode, async (req, res) =>
     const photoIndex = inspection.photos.findIndex((p) => p.filename === filename);
     if (photoIndex === -1) return res.status(404).json({ error: 'תמונה לא נמצאה' });
 
+    const photo = inspection.photos[photoIndex];
     inspection.photos.splice(photoIndex, 1);
     await inspection.save();
 
-    // Delete file from disk
-    const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), filename);
-    fs.unlink(filePath, () => {});
+    // Delete from R2 or local disk
+    if (photo.r2Key) {
+      const { deleteObject } = require('../services/r2Service');
+      await deleteObject(photo.r2Key);
+    } else {
+      const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), filename);
+      fs.unlink(filePath, () => {});
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -435,16 +397,28 @@ router.put('/:id/documents', requireTeamCode, uploadLimiter, upload.array('docum
     }
 
     if (req.files && req.files.length > 0) {
-      const movedDocs = moveFilesToInspectionDir(req.files, inspection._id);
-      inspection.documents.push(...movedDocs);
+      const { uploadLocalFile } = require('../services/r2Service');
+      for (const file of req.files) {
+        const ext = path.extname(file.originalname) || path.extname(file.filename);
+        const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const r2Key = `pending/${unique}${ext}`;
+        try {
+          await uploadLocalFile(r2Key, file.path, file.mimetype);
+          inspection.documents.push({
+            filename: path.basename(r2Key),
+            originalName: file.originalname,
+            r2Key,
+          });
+        } finally {
+          fs.unlink(file.path, () => {});
+        }
+      }
       await inspection.save();
     }
 
     res.json(inspection);
   } catch (err) {
-    if (req.files) {
-      for (const f of req.files) fs.unlink(f.path, () => {});
-    }
+    if (req.files) for (const f of req.files) fs.unlink(f.path, () => {});
     res.status(500).json({ error: err.message });
   }
 });
@@ -462,11 +436,17 @@ router.delete('/:id/documents/:docFilename', requireTeamCode, async (req, res) =
     const docIndex = inspection.documents.findIndex((d) => d.filename === filename);
     if (docIndex === -1) return res.status(404).json({ error: 'מסמך לא נמצא' });
 
+    const doc = inspection.documents[docIndex];
     inspection.documents.splice(docIndex, 1);
     await inspection.save();
 
-    const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), filename);
-    fs.unlink(filePath, () => {});
+    if (doc.r2Key) {
+      const { deleteObject } = require('../services/r2Service');
+      await deleteObject(doc.r2Key);
+    } else {
+      const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), filename);
+      fs.unlink(filePath, () => {});
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -568,6 +548,11 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
             const doc = inspection.documents.find((d) => d.filename === r.filename);
             if (doc && !doc.driveFileId) {
               doc.driveFileId = r.driveFileId;
+              if (doc.r2Key) {
+                const { deleteObject } = require('../services/r2Service');
+                await deleteObject(doc.r2Key).catch(() => {});
+                doc.r2Key = null;
+              }
               dirty = true;
             }
           }
@@ -591,6 +576,11 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
           const photo = inspection.photos.find((p) => p.filename === r.filename);
           if (photo && !photo.driveFileId) {
             photo.driveFileId = r.driveFileId;
+            if (photo.r2Key) {
+              const { deleteObject } = require('../services/r2Service');
+              await deleteObject(photo.r2Key).catch(() => {});
+              photo.r2Key = null;
+            }
             dirty = true;
           }
         }
@@ -984,8 +974,17 @@ router.post('/:id/delete', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'הבחינה כבר נמחקה' });
     }
 
-    // Clean up local files if they exist
+    // Clean up local files (legacy) and R2 files
     deleteInspectionFiles(inspection._id);
+
+    const r2Keys = [
+      ...inspection.photos.filter((p) => p.r2Key).map((p) => p.r2Key),
+      ...(inspection.documents || []).filter((d) => d.r2Key).map((d) => d.r2Key),
+    ];
+    if (r2Keys.length > 0) {
+      const { deleteObjects } = require('../services/r2Service');
+      await deleteObjects(r2Keys).catch(() => {});
+    }
 
     inspection.status = 'deleted';
     await inspection.save();

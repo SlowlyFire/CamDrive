@@ -190,6 +190,24 @@ async function uploadFile(localPath, filename, folderId) {
 }
 
 /**
+ * Upload a Node.js Readable stream to a Drive folder.
+ * Used when the source is an R2 object (no local file on disk).
+ */
+async function uploadStream(stream, filename, folderId) {
+  const drive = getDriveClient();
+  const res = await drive.files.create({
+    supportsAllDrives: true,
+    requestBody: { name: filename, parents: [folderId] },
+    media: {
+      mimeType: mimeForUpload(filename),
+      body: stream,
+    },
+    fields: 'id',
+  });
+  return res.data.id;
+}
+
+/**
  * Upload a file with up to maxRetries attempts (exponential back-off).
  */
 async function uploadFileWithRetry(localPath, filename, folderId, maxRetries = 3) {
@@ -223,13 +241,30 @@ async function uploadPhotosBatch(photos, localDir, folderId, concurrency = 3, on
     const batch = photos.slice(i, i + concurrency);
     const batchResults = await Promise.all(
       batch.map(async (photo) => {
-        const localPath = path.join(localDir, photo.filename);
+        const displayName = photo.originalName || photo.filename;
         try {
-          const driveFileId = await uploadFileWithRetry(
-            localPath,
-            photo.originalName || photo.filename,
-            folderId
-          );
+          let driveFileId;
+          if (photo.r2Key) {
+            // Source is R2 — stream directly to Drive with retry (fresh stream per attempt)
+            const { getReadStream } = require('./r2Service');
+            let lastErr;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                const stream = await getReadStream(photo.r2Key);
+                driveFileId = await uploadStream(stream, displayName, folderId);
+                break;
+              } catch (err) {
+                lastErr = err;
+                console.error(`R2→Drive attempt ${attempt} failed for ${photo.filename}:`, err.message);
+                if (attempt < 3) await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+              }
+            }
+            if (!driveFileId) throw lastErr;
+          } else {
+            // Source is local disk (legacy flow)
+            const localPath = path.join(localDir, photo.filename);
+            driveFileId = await uploadFileWithRetry(localPath, displayName, folderId);
+          }
           return { filename: photo.filename, driveFileId, success: true };
         } catch (err) {
           return { filename: photo.filename, success: false, error: err.message };
@@ -241,7 +276,6 @@ async function uploadPhotosBatch(photos, localDir, folderId, concurrency = 3, on
       try {
         await onBatchComplete(batchResults);
       } catch (cbErr) {
-        // Non-fatal — upload continues even if progress save fails
         console.error('uploadPhotosBatch: onBatchComplete error (non-fatal):', cbErr.message);
       }
     }
@@ -391,6 +425,7 @@ module.exports = {
   findOrCreateSubfolder,
   deleteFile,
   uploadFile,
+  uploadStream,
   uploadFileWithRetry,
   uploadPhotosBatch,
   prepareApprovalFolder,

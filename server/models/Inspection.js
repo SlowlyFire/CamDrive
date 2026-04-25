@@ -4,13 +4,15 @@ const { v4: uuidv4 } = require('uuid');
 const photoSchema = new mongoose.Schema({
   filename: { type: String, required: true },
   originalName: { type: String, required: true },
-  driveFileId: { type: String, default: null },
+  r2Key: { type: String, default: null },      // R2 object key while pending
+  driveFileId: { type: String, default: null }, // set after approved → Drive
   uploadedAt: { type: Date, default: Date.now },
 });
 
 const documentSchema = new mongoose.Schema({
   filename: { type: String, required: true },
   originalName: { type: String, required: true },
+  r2Key: { type: String, default: null },
   driveFileId: { type: String, default: null },
   uploadedAt: { type: Date, default: Date.now },
 });
