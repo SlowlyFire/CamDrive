@@ -38,10 +38,16 @@ function VideoPreview({ src, name }) {
  */
 async function uploadToR2(file, onProgress) {
   // 1. Get presigned URL from server
-  const { data } = await api.get('/upload/presign', {
-    params: { filename: file.name, contentType: file.type || 'application/octet-stream' },
-  })
-  const { url, key } = data
+  let url, key
+  try {
+    const { data } = await api.get('/upload/presign', {
+      params: { filename: file.name, contentType: file.type || 'application/octet-stream' },
+    })
+    url = data.url
+    key = data.key
+  } catch (err) {
+    throw new Error(`שגיאת שרת (presign): ${err.response?.data?.error || err.message}`)
+  }
 
   // 2. PUT file directly to R2 (XHR for upload progress)
   await new Promise((resolve, reject) => {
@@ -53,9 +59,9 @@ async function uploadToR2(file, onProgress) {
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve()
-      else reject(new Error(`R2 upload failed: ${xhr.status}`))
+      else reject(new Error(`R2 upload failed: HTTP ${xhr.status}`))
     }
-    xhr.onerror = () => reject(new Error('Network error during upload'))
+    xhr.onerror = () => reject(new Error('שגיאת CORS/רשת בהעלאה ל-R2 — בדוק CORS config ב-Cloudflare'))
     xhr.send(file)
   })
 
