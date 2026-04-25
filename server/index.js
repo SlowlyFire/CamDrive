@@ -36,8 +36,8 @@ app.use(helmet({
       defaultSrc:  ["'self'"],
       scriptSrc:   ["'self'"],
       styleSrc:    ["'self'", "'unsafe-inline'"], // Tailwind injects some inline styles
-      imgSrc:      ["'self'", 'data:', 'blob:', 'https://lh3.googleusercontent.com'],
-      mediaSrc:    ["'self'", 'blob:'],
+      imgSrc:      ["'self'", 'data:', 'blob:', 'https://lh3.googleusercontent.com', 'https://*.r2.cloudflarestorage.com'],
+      mediaSrc:    ["'self'", 'blob:', 'https://*.r2.cloudflarestorage.com'],
       connectSrc:  ["'self'", 'https://*.r2.cloudflarestorage.com'],
       fontSrc:     ["'self'"],
       objectSrc:   ["'none'"],
