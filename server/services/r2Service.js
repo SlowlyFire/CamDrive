@@ -15,6 +15,10 @@ function getR2Client() {
       accessKeyId: R2_ACCESS_KEY_ID,
       secretAccessKey: R2_SECRET_ACCESS_KEY,
     },
+    // AWS SDK v3 auto-adds checksum headers (x-amz-checksum-crc32 etc.) that
+    // Cloudflare R2 does not support. Disable them explicitly.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
   });
 }
 
