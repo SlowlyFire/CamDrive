@@ -312,6 +312,20 @@ router.get('/:id', async (req, res) => {
   try {
     const inspection = await Inspection.findById(req.params.id);
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
+
+    // Auto-finalize: if partially_approved but every file already has a driveFileId,
+    // clear failedUploads and promote to approved so the card and detail are consistent.
+    if (inspection.status === 'partially_approved') {
+      const allDone =
+        inspection.photos.every((p) => p.driveFileId) &&
+        (inspection.documents || []).every((d) => d.driveFileId);
+      if (allDone) {
+        inspection.status = 'approved';
+        inspection.failedUploads = [];
+        await inspection.save();
+      }
+    }
+
     res.json(inspection);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -600,13 +614,13 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
       inspection.status = 'approved';
       inspection.processedAt = new Date();
       inspection.failedUploads = [];
-      inspection.approvedBy = req.manager?.managerName || null;
+      inspection.approvedBy = req.manager?.managerName || req.body?.managerName || null;
       await inspection.save();
       deleteInspectionFiles(inspection._id);
     } else {
       inspection.status = 'partially_approved';
       inspection.processedAt = new Date();
-      inspection.approvedBy = req.manager?.managerName || null;
+      inspection.approvedBy = req.manager?.managerName || req.body?.managerName || null;
       inspection.failedUploads = [
         ...stillMissingPhotos.map((p) => ({
           filename:     p.filename,
@@ -797,6 +811,7 @@ router.post('/:id/reject', requireAuth, async (req, res) => {
     inspection.status = 'rejected';
     inspection.rejectedAt = new Date();
     inspection.rejectionReason = reason;
+    inspection.rejectedBy = req.manager?.managerName || req.body?.managerName || null;
     await inspection.save();
 
     res.json({ success: true, inspection });
@@ -933,7 +948,7 @@ router.post('/:id/classify', requireAuth, async (req, res) => {
     inspection.classifiedAt = new Date();
     inspection.processedAt = new Date();
     inspection.driveFolderId = folderId;
-    inspection.approvedBy = req.manager?.managerName || null;
+    inspection.approvedBy = req.manager?.managerName || req.body?.managerName || null;
     await inspection.save();
 
     deleteInspectionFiles(inspection._id);

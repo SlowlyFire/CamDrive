@@ -55,6 +55,12 @@ export default function InspectionCard({ inspection, linkTo }) {
         {inspection.status === 'partially_approved' && inspection.failedUploads?.length > 0 && (
           <span className="text-orange-600 font-bold">⚠️ {inspection.failedUploads.length} קבצים לא הועלו</span>
         )}
+        {inspection.approvedBy && (
+          <span className="text-gray-400">✅ {inspection.approvedBy}</span>
+        )}
+        {inspection.rejectedBy && (
+          <span className="text-gray-400">❌ {inspection.rejectedBy}</span>
+        )}
       </div>
     </div>
   )

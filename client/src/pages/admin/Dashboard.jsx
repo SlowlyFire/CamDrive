@@ -97,6 +97,8 @@ function PendingTab({ navigate }) {
 function TodayTab({ navigate }) {
   const [inspections, setInspections] = useState([])
   const [loading, setLoading] = useState(true)
+  const [showEnlistment, setShowEnlistment] = useState(true)
+  const [showRelease, setShowRelease] = useState(true)
 
   useEffect(() => {
     api.get('/inspections/today')
@@ -106,13 +108,6 @@ function TodayTab({ navigate }) {
 
   if (loading) return <div className="flex justify-center py-12"><Spinner /></div>
 
-  if (inspections.length === 0) return (
-    <div className="text-center py-16 text-gray-400">
-      <p className="text-5xl mb-3">📋</p>
-      <p className="font-semibold">לא טופלו בחינות היום</p>
-    </div>
-  )
-
   const CLASS_LABEL = { reserve: 'רזרבה', temporarily_disqualified: 'נפסל זמנית', disqualified: 'נפסל' }
   const CLASS_COLOR = {
     reserve: 'bg-yellow-100 text-yellow-800',
@@ -120,9 +115,45 @@ function TodayTab({ navigate }) {
     disqualified: 'bg-red-200 text-red-900',
   }
 
+  const filtered = inspections.filter((insp) =>
+    (insp.type === 'enlistment' && showEnlistment) ||
+    (insp.type === 'release' && showRelease)
+  )
+
   return (
     <div className="flex flex-col gap-3">
-      {inspections.map((insp) => (
+      {/* Filter toggles */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setShowEnlistment((v) => !v)}
+          className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-colors ${
+            showEnlistment
+              ? 'bg-blue-900 text-white border-blue-900'
+              : 'bg-white text-blue-900 border-blue-900'
+          }`}
+        >
+          גיוסים
+        </button>
+        <button
+          onClick={() => setShowRelease((v) => !v)}
+          className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-colors ${
+            showRelease
+              ? 'bg-purple-700 text-white border-purple-700'
+              : 'bg-white text-purple-700 border-purple-700'
+          }`}
+        >
+          שחרורים
+        </button>
+      </div>
+
+      {filtered.length === 0 && (
+        <div className="text-center py-16 text-gray-400">
+          <p className="text-5xl mb-3">📋</p>
+          <p className="font-semibold">{inspections.length === 0 ? 'לא טופלו בחינות היום' : 'אין תוצאות לפילטר הנוכחי'}</p>
+        </div>
+      )}
+
+      {filtered.map((insp) => (
         <div
           key={insp._id}
           className="bg-white rounded-xl border border-gray-200 p-4 cursor-pointer active:bg-gray-50"
@@ -132,6 +163,9 @@ function TodayTab({ navigate }) {
             <div>
               <p className="font-bold text-lg text-gray-900">{insp.licensePlate}</p>
               <p className="text-sm text-gray-500">{insp.vehicleType || ''}</p>
+              {insp.approvedBy && (
+                <p className="text-xs text-gray-400 mt-0.5">טופל ע״י {insp.approvedBy}</p>
+              )}
             </div>
             <div className="flex flex-col items-end gap-1">
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${insp.type === 'enlistment' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}`}>

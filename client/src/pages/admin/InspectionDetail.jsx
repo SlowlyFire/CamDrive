@@ -32,7 +32,9 @@ export default function InspectionDetail() {
     setActionLoading(true)
     setError('')
     try {
-      const r = await api.post(`/inspections/${id}/approve`)
+      const r = await api.post(`/inspections/${id}/approve`, {
+        managerName: localStorage.getItem('managerName') || '',
+      })
       const status = r.data.inspection?.status || 'approved'
       setResult({ type: status, folderName: r.data.driveFolderName })
       setInspection(r.data.inspection)
@@ -78,7 +80,10 @@ export default function InspectionDetail() {
     setActionLoading(true)
     setError('')
     try {
-      await api.post(`/inspections/${id}/reject`, { reason: rejectReason })
+      await api.post(`/inspections/${id}/reject`, {
+        reason: rejectReason,
+        managerName: localStorage.getItem('managerName') || '',
+      })
       setResult({ type: 'rejected' })
       setInspection((i) => ({ ...i, status: 'rejected', rejectionReason: rejectReason }))
       setShowRejectForm(false)
@@ -95,7 +100,10 @@ export default function InspectionDetail() {
     setActionLoading(true)
     setError('')
     try {
-      const r = await api.post(`/inspections/${id}/classify`, { classification })
+      const r = await api.post(`/inspections/${id}/classify`, {
+        classification,
+        managerName: localStorage.getItem('managerName') || '',
+      })
       setResult({ type: classification, folderName: r.data.driveFolderName })
       setInspection(r.data.inspection)
     } catch (err) {
@@ -209,7 +217,8 @@ export default function InspectionDetail() {
           {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
           {inspection.securityCode && <Row label="קודן" value={inspection.securityCode} />}
           {inspection.notes && <Row label="הערות" value={inspection.notes} />}
-          {inspection.approvedBy && <Row label="טופל ע״י" value={inspection.approvedBy} />}
+          {inspection.approvedBy && <Row label="אושר ע״י" value={inspection.approvedBy} />}
+          {inspection.rejectedBy && <Row label="נדחה ע״י" value={inspection.rejectedBy} />}
           {inspection.status === 'rejected' && inspection.rejectionReason && (
             <div className="mt-2 p-3 bg-red-50 rounded-lg">
               <p className="text-red-700 text-sm font-bold">סיבת דחייה:</p>
@@ -222,10 +231,12 @@ export default function InspectionDetail() {
         {(() => {
           const uploadedPhotos = inspection.photos.filter((p) => p.driveFileId)
           const failedPhotos   = inspection.photos.filter((p) => !p.driveFileId)
-          const hasSplitView   = isPartiallyApproved
+          const allInDrive     = failedPhotos.length === 0 &&
+                                 (inspection.documents || []).every((d) => d.driveFileId)
+          const hasSplitView   = isPartiallyApproved && !allInDrive
 
-          // Approved or classified with Drive folder — show link
-          if ((inspection.status === 'approved' || isClassified) && inspection.driveFolderId) {
+          // Approved / classified / partially_approved-with-all-files-in-Drive → show link only
+          if ((inspection.status === 'approved' || isClassified || (isPartiallyApproved && allInDrive)) && inspection.driveFolderId) {
             return (
               <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <p className="font-bold text-gray-700 mb-3">
