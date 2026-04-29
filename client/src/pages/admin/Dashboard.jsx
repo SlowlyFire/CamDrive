@@ -10,6 +10,7 @@ const TABS = [
   { id: 'vehicles',      label: 'כלים' },
   { id: 'people',        label: 'אנשים' },
   { id: 'vehicle-types', label: 'סוגי כלים' },
+  { id: 'fuel-cards',    label: '⛽ דלק' },
   { id: 'stats',         label: 'סטטיסטיקות' },
 ]
 
@@ -54,6 +55,7 @@ export default function Dashboard() {
         {tab === 'vehicles'      && <VehiclesTab navigate={navigate} />}
         {tab === 'people'        && <PeopleTab />}
         {tab === 'vehicle-types' && <VehicleTypesTab />}
+        {tab === 'fuel-cards'    && <FuelCardsTab />}
         {tab === 'stats'         && <StatsTab />}
       </div>
     </div>
@@ -485,6 +487,282 @@ function StatCard({ label, value, color }) {
     <div className={`rounded-xl border-2 p-4 text-center ${color}`}>
       <p className="text-3xl font-black text-blue-900">{value}</p>
       <p className="text-xs text-gray-600 mt-1">{label}</p>
+    </div>
+  )
+}
+
+// ── Fuel Cards Tab ─────────────────────────────────────────────────────────
+const FUEL_STATUS_LABEL = { available: 'בחמל', taken: 'נלקח', empty: 'ריק' }
+const FUEL_STATUS_COLOR = {
+  available: 'bg-green-100 text-green-800',
+  taken:     'bg-yellow-100 text-yellow-800',
+  empty:     'bg-red-100 text-red-800',
+}
+const FUEL_TYPE_COLOR = {
+  'סולר':  'bg-gray-800 text-white',
+  'בנזין': 'bg-red-600 text-white',
+}
+
+function formatRelative(date) {
+  if (!date) return '—'
+  const diff = Date.now() - new Date(date).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'עכשיו'
+  if (mins < 60) return `לפני ${mins} דק'`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `לפני ${hrs} שע'`
+  return `לפני ${Math.floor(hrs / 24)} ימים`
+}
+
+function FuelCardsTab() {
+  const [cards, setCards] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showAdd, setShowAdd] = useState(false)
+  const [newCardId, setNewCardId] = useState('')
+  const [newFuelType, setNewFuelType] = useState('סולר')
+  const [adding, setAdding] = useState(false)
+  const [addError, setAddError] = useState('')
+  const [deleteConfirm, setDeleteConfirm] = useState(null) // card id
+  const [historyCard, setHistoryCard] = useState(null) // card object
+  const [history, setHistory] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [shareUrl, setShareUrl] = useState('')
+  const [shareLoading, setShareLoading] = useState(false)
+
+  function load() {
+    api.get('/fuel-cards').then((r) => setCards(r.data)).finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [])
+
+  async function addCard(e) {
+    e.preventDefault()
+    if (!newCardId.trim()) return
+    setAdding(true)
+    setAddError('')
+    try {
+      await api.post('/fuel-cards', { cardId: newCardId.trim(), fuelType: newFuelType })
+      setNewCardId('')
+      setShowAdd(false)
+      load()
+    } catch (err) {
+      setAddError(err.response?.data?.error || 'שגיאה')
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  async function deleteCard(id) {
+    try {
+      await api.delete(`/fuel-cards/${id}`)
+      setDeleteConfirm(null)
+      load()
+    } catch (err) {
+      alert(err.response?.data?.error || 'שגיאה במחיקה')
+    }
+  }
+
+  async function openHistory(card) {
+    setHistoryCard(card)
+    setHistoryLoading(true)
+    setHistory([])
+    try {
+      const r = await api.get(`/fuel-cards/${card.cardId}/history`)
+      setHistory(r.data)
+    } catch {
+      setHistory([])
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  async function generateShare() {
+    setShareLoading(true)
+    try {
+      const r = await api.post('/fuel-cards/share-token')
+      const url = `${window.location.origin}/fuel-share/${r.data.token}`
+      setShareUrl(url)
+    } catch {
+      alert('שגיאה ביצירת קישור')
+    } finally {
+      setShareLoading(false)
+    }
+  }
+
+  if (loading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Actions row */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setShowAdd((v) => !v)}
+          className="flex-1 py-3 bg-blue-900 text-white font-bold rounded-xl text-sm"
+        >
+          + הוסף כרטיס
+        </button>
+        <button
+          onClick={generateShare}
+          disabled={shareLoading}
+          className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm"
+        >
+          {shareLoading ? '…' : '🔗 שתף'}
+        </button>
+      </div>
+
+      {/* Share URL */}
+      {shareUrl && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center gap-2">
+          <p className="text-xs text-blue-800 font-mono break-all flex-1">{shareUrl}</p>
+          <button
+            onClick={() => { navigator.clipboard.writeText(shareUrl); alert('הועתק!') }}
+            className="text-blue-700 font-bold text-xs shrink-0"
+          >
+            העתק
+          </button>
+        </div>
+      )}
+
+      {/* Add form */}
+      {showAdd && (
+        <form onSubmit={addCard} className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-3">
+          <p className="font-bold text-gray-700">הוסף כרטיס חדש</p>
+          <input
+            type="text"
+            value={newCardId}
+            onChange={(e) => setNewCardId(e.target.value)}
+            placeholder="מזהה כרטיס (מספר הכרטיס)"
+            className="border-2 border-gray-300 rounded-xl px-4 py-3 text-base focus:border-blue-900 outline-none"
+          />
+          <div className="flex gap-2">
+            {['סולר', 'בנזין'].map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setNewFuelType(t)}
+                className={`flex-1 py-2.5 rounded-xl font-bold text-sm border-2 transition-colors ${
+                  newFuelType === t
+                    ? t === 'סולר' ? 'bg-gray-800 text-white border-gray-800' : 'bg-red-600 text-white border-red-600'
+                    : 'bg-white text-gray-700 border-gray-300'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          {addError && <p className="text-red-600 text-sm">{addError}</p>}
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setShowAdd(false)} className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm">ביטול</button>
+            <button type="submit" disabled={adding || !newCardId.trim()} className="flex-1 py-3 bg-blue-900 text-white font-bold rounded-xl text-sm disabled:opacity-50">
+              {adding ? '…' : 'הוסף'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Cards list */}
+      {cards.length === 0 ? (
+        <div className="text-center py-12 text-gray-400">
+          <p className="text-4xl mb-2">⛽</p>
+          <p className="font-semibold">אין כרטיסי דלק — הוסף למעלה</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {cards.map((card) => (
+            <div
+              key={card._id}
+              className="bg-white rounded-xl border border-gray-200 p-4 cursor-pointer active:bg-gray-50"
+              onClick={() => openHistory(card)}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-black text-lg text-gray-900">{card.cardId}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{formatRelative(card.lastUpdated)}</p>
+                  {card.currentHolder && (
+                    <p className="text-sm text-gray-600">אצל: {card.currentHolder}</p>
+                  )}
+                  {card.litersRemaining != null && (
+                    <p className="text-sm text-gray-500">יתרה: {card.litersRemaining} ל'</p>
+                  )}
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <div className="flex items-center gap-1">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${FUEL_TYPE_COLOR[card.fuelType]}`}>
+                      {card.fuelType}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteConfirm(card._id) }}
+                      className="text-red-400 text-lg font-bold px-1"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${FUEL_STATUS_COLOR[card.status] || 'bg-gray-100 text-gray-600'}`}>
+                    {card.status === 'taken' && card.currentHolder
+                      ? `אצל ${card.currentHolder}`
+                      : FUEL_STATUS_LABEL[card.status] || card.status}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Delete confirm */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-6" dir="rtl">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm flex flex-col gap-4">
+            <p className="font-bold text-gray-800">למחוק את הכרטיס?</p>
+            <p className="text-sm text-gray-500">הכרטיס יוסר מהרשימה (ניתן לשחזר ידנית מ-DB).</p>
+            <div className="flex gap-2">
+              <button onClick={() => setDeleteConfirm(null)} className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl">ביטול</button>
+              <button onClick={() => deleteCard(deleteConfirm)} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl">מחק</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* History panel */}
+      {historyCard && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end" dir="rtl">
+          <div className="bg-white w-full rounded-t-2xl p-5 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-black text-xl">היסטוריה — {historyCard.cardId}</h2>
+              <button onClick={() => setHistoryCard(null)} className="text-gray-400 text-2xl font-bold leading-none">×</button>
+            </div>
+            <div className="overflow-y-auto flex-1">
+              {historyLoading ? (
+                <div className="flex justify-center py-8"><Spinner /></div>
+              ) : history.length === 0 ? (
+                <p className="text-center text-gray-400 py-8">אין פעילות ב-30 הימים האחרונים</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {history.map((log) => (
+                    <div key={log._id} className="border border-gray-200 rounded-xl p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${log.action === 'taken' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}`}>
+                            {log.action === 'taken' ? 'נלקח' : 'הוחזר'}
+                          </span>
+                          <span className="text-sm font-bold text-gray-900 mr-2">{log.person}</span>
+                        </div>
+                        <span className="text-xs text-gray-400">
+                          {new Date(log.createdAt).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      {log.litersRemaining != null && (
+                        <p className="text-xs text-gray-500 mt-1">יתרה: {log.litersRemaining} ל'</p>
+                      )}
+                      {log.notes && <p className="text-xs text-gray-500 mt-0.5">הערה: {log.notes}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

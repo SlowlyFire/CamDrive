@@ -11,6 +11,8 @@ import Dashboard from './pages/admin/Dashboard'
 import InspectionDetail from './pages/admin/InspectionDetail'
 import VehicleHistory from './pages/admin/VehicleHistory'
 import Share from './pages/Share'
+import FuelShare from './pages/FuelShare'
+import FuelCards from './pages/team/FuelCards'
 
 function RequireAuth({ children }) {
   const token = localStorage.getItem('adminToken')
@@ -35,6 +37,7 @@ export default function App() {
         <Route path="/team/new" element={<RequireTeamCode><NewInspection /></RequireTeamCode>} />
         <Route path="/team/pending" element={<RequireTeamCode><PendingInspections /></RequireTeamCode>} />
         <Route path="/team/inspection/:id" element={<RequireTeamCode><InspectionView /></RequireTeamCode>} />
+        <Route path="/team/fuel-cards" element={<RequireTeamCode><FuelCards /></RequireTeamCode>} />
 
         {/* Admin */}
         <Route path="/admin/login" element={<Login />} />
@@ -44,6 +47,7 @@ export default function App() {
 
         {/* Public share — no code required */}
         <Route path="/share/:token" element={<Share />} />
+        <Route path="/fuel-share/:token" element={<FuelShare />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

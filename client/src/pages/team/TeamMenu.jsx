@@ -38,6 +38,13 @@ export default function TeamMenu() {
             </span>
           )}
         </button>
+
+        <button
+          onClick={() => navigate('/team/fuel-cards')}
+          className="w-full max-w-xs bg-white border-2 border-gray-800 text-gray-800 font-black text-2xl py-10 rounded-2xl shadow active:scale-95 transition-transform"
+        >
+          ⛽ כרטיסי דלק
+        </button>
       </div>
     </div>
   )

@@ -80,6 +80,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/vehicle-types', vehicleTypeRoutes);
 app.use('/api/managers', managersRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/fuel-cards', require('./routes/fuelCards'));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
