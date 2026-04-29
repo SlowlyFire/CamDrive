@@ -52,8 +52,8 @@ export default function FuelCards() {
     setError('')
   }
 
-  function openReturn(card) {
-    setForm({ person: card.currentHolder || myName, liters: card.litersRemaining ?? '', notes: '', isEmpty: false })
+  function openReturn(card, presetEmpty = false) {
+    setForm({ person: card.currentHolder || myName, liters: presetEmpty ? '' : (card.litersRemaining ?? ''), notes: '', isEmpty: presetEmpty })
     setAction({ card, type: 'return' })
     setError('')
   }
@@ -143,16 +143,24 @@ export default function FuelCards() {
                   </button>
                 )}
                 {isTakenByMe && (
-                  <button
-                    onClick={() => openReturn(card)}
-                    className="w-full py-2.5 bg-green-600 text-white font-bold rounded-xl text-sm active:opacity-80"
-                  >
-                    להחזיר לחמל
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openReturn(card)}
+                      className="flex-1 min-w-0 py-2.5 bg-green-600 text-white font-bold rounded-xl text-sm active:opacity-80"
+                    >
+                      להחזיר לחמל
+                    </button>
+                    <button
+                      onClick={() => openReturn(card, true)}
+                      className="flex-1 min-w-0 py-2.5 bg-red-600 text-white font-bold rounded-xl text-sm active:opacity-80"
+                    >
+                      🔴 ריק
+                    </button>
+                  </div>
                 )}
                 {isTakenByOther && (
-                  <p className="text-center text-sm text-yellow-700 font-semibold py-1">
-                    🔒 נמצא אצל {card.currentHolder} — יש להחזיר תחילה
+                  <p className="text-center text-sm text-yellow-700 font-semibold py-1 break-words">
+                    🔒 נמצא אצל {card.currentHolder}
                   </p>
                 )}
                 {isEmpty && (

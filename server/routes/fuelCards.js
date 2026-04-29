@@ -29,11 +29,28 @@ router.post('/', requireAuth, async (req, res) => {
     if (!['סולר', 'בנזין'].includes(fuelType)) {
       return res.status(400).json({ error: 'סוג דלק לא תקין — יש לבחור סולר או בנזין' });
     }
+
+    // Check for existing card with same ID regardless of active status
+    const existing = await FuelCard.findOne({ cardId });
+    if (existing) {
+      if (existing.active) {
+        return res.status(400).json({ error: 'כרטיס עם מזהה זה כבר קיים' });
+      }
+      // Reactivate the soft-deleted card with fresh state
+      existing.fuelType = fuelType;
+      existing.active = true;
+      existing.status = 'available';
+      existing.currentHolder = null;
+      existing.litersRemaining = null;
+      existing.lastUpdated = new Date();
+      await existing.save();
+      return res.status(201).json(existing);
+    }
+
     const card = new FuelCard({ cardId, fuelType });
     await card.save();
     res.status(201).json(card);
   } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ error: 'כרטיס עם מזהה זה כבר קיים' });
     res.status(500).json({ error: err.message });
   }
 });
