@@ -52,6 +52,7 @@ function VideoThumbnail({ src, filename, onClick }) {
 
 export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = false, urlBase = 'photos' }) {
   const [lightbox, setLightbox] = useState(null)
+  const [touchStartX, setTouchStartX] = useState(null)
 
   if (!photos || photos.length === 0) {
     return <p className="text-gray-400 text-sm text-center py-4">אין תמונות</p>
@@ -96,6 +97,16 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
         <div
           className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
           onClick={() => setLightbox(null)}
+          onTouchStart={(e) => setTouchStartX(e.touches[0].clientX)}
+          onTouchEnd={(e) => {
+            if (touchStartX === null) return
+            const delta = touchStartX - e.changedTouches[0].clientX
+            if (Math.abs(delta) > 50) {
+              if (delta > 0) setLightbox((l) => Math.min(photos.length - 1, l + 1))
+              else setLightbox((l) => Math.max(0, l - 1))
+            }
+            setTouchStartX(null)
+          }}
         >
           <button className="absolute top-4 left-4 text-white text-3xl">×</button>
           <button

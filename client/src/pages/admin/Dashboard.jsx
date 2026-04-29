@@ -528,6 +528,10 @@ function FuelCardsTab() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
   const [shareLoading, setShareLoading] = useState(false)
+  const [showDeleted, setShowDeleted] = useState(false)
+  const [deletedData, setDeletedData] = useState([])
+  const [deletedLoading, setDeletedLoading] = useState(false)
+  const [deletedSearch, setDeletedSearch] = useState('')
 
   function load() {
     api.get('/fuel-cards').then((r) => setCards(r.data)).finally(() => setLoading(false))
@@ -576,6 +580,20 @@ function FuelCardsTab() {
     }
   }
 
+  async function openDeleted() {
+    setShowDeleted(true)
+    setDeletedLoading(true)
+    setDeletedSearch('')
+    try {
+      const r = await api.get('/fuel-cards/deleted')
+      setDeletedData(r.data)
+    } catch {
+      setDeletedData([])
+    } finally {
+      setDeletedLoading(false)
+    }
+  }
+
   async function generateShare() {
     setShareLoading(true)
     try {
@@ -609,6 +627,14 @@ function FuelCardsTab() {
           {shareLoading ? '…' : '🔗 שתף'}
         </button>
       </div>
+
+      {/* Deleted history button */}
+      <button
+        onClick={openDeleted}
+        className="w-full py-3 bg-gray-800 text-white font-bold rounded-xl text-sm"
+      >
+        🗑️ היסטוריית כרטיסים שנמחקו
+      </button>
 
       {/* Share URL */}
       {shareUrl && (
@@ -718,6 +744,75 @@ function FuelCardsTab() {
             <div className="flex gap-2">
               <button onClick={() => setDeleteConfirm(null)} className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl">ביטול</button>
               <button onClick={() => deleteCard(deleteConfirm)} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl">מחק</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deleted cards history panel */}
+      {showDeleted && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end" dir="rtl">
+          <div className="bg-white w-full rounded-t-2xl p-5 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-black text-xl">כרטיסים שנמחקו</h2>
+              <button onClick={() => setShowDeleted(false)} className="text-gray-400 text-2xl font-bold leading-none">×</button>
+            </div>
+            <input
+              type="text"
+              value={deletedSearch}
+              onChange={(e) => setDeletedSearch(e.target.value)}
+              placeholder="חיפוש לפי מזהה כרטיס…"
+              className="border-2 border-gray-300 rounded-xl px-4 py-2 text-base focus:border-blue-900 outline-none mb-3"
+            />
+            <div className="overflow-y-auto flex-1">
+              {deletedLoading ? (
+                <div className="flex justify-center py-8"><Spinner /></div>
+              ) : deletedData.length === 0 ? (
+                <p className="text-center text-gray-400 py-8">אין כרטיסים שנמחקו</p>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {deletedData
+                    .filter(({ card }) =>
+                      !deletedSearch.trim() ||
+                      card.cardId.toLowerCase().includes(deletedSearch.trim().toLowerCase())
+                    )
+                    .map(({ card, logs }) => (
+                      <div key={card._id} className="border border-gray-200 rounded-xl p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <p className="font-black text-lg text-gray-900">{card.cardId}</p>
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${FUEL_TYPE_COLOR[card.fuelType]}`}>{card.fuelType}</span>
+                          </div>
+                          <span className="text-xs text-gray-400">
+                            נמחק: {new Date(card.lastUpdated).toLocaleDateString('he-IL')}
+                          </span>
+                        </div>
+                        {logs.length === 0 ? (
+                          <p className="text-xs text-gray-400">אין פעילות מתועדת</p>
+                        ) : (
+                          <div className="flex flex-col gap-1.5">
+                            {logs.map((log) => (
+                              <div key={log._id} className="flex items-center justify-between gap-2 py-1 border-t border-gray-100">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full shrink-0 ${log.action === 'taken' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}`}>
+                                    {log.action === 'taken' ? 'נלקח' : 'הוחזר'}
+                                  </span>
+                                  <span className="text-sm text-gray-800 truncate">{log.person}</span>
+                                  {log.litersRemaining != null && (
+                                    <span className="text-xs text-gray-500 shrink-0">{log.litersRemaining} ל'</span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-gray-400 shrink-0">
+                                  {new Date(log.createdAt).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

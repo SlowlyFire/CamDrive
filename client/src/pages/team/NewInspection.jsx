@@ -91,6 +91,8 @@ export default function NewInspection() {
   const [uploadStatus, setUploadStatus] = useState('')
   const [done, setDone] = useState(false)
   const [fieldErrors, setFieldErrors] = useState({})
+  const [lightbox, setLightbox] = useState(null) // { items: [{preview, file}], index }
+  const [lbTouchStartX, setLbTouchStartX] = useState(null)
 
   useEffect(() => {
     api.get('/people').then((r) => setPeople(r.data))
@@ -396,11 +398,13 @@ export default function NewInspection() {
             <div className="grid grid-cols-4 gap-1 mt-2">
               {photos.map((p, i) => (
                 <div key={i} className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden">
-                  {isVideoFile(p.file) ? (
-                    <VideoPreview src={p.preview} name={p.file.name} />
-                  ) : (
-                    <img src={p.preview} className="w-full h-full object-cover" alt="" />
-                  )}
+                  <div className="w-full h-full cursor-pointer" onClick={() => setLightbox({ items: photos, index: i })}>
+                    {isVideoFile(p.file) ? (
+                      <VideoPreview src={p.preview} name={p.file.name} />
+                    ) : (
+                      <img src={p.preview} className="w-full h-full object-cover" alt="" />
+                    )}
+                  </div>
                   <button type="button" onClick={() => removePhoto(i)}
                     className="absolute top-0.5 left-0.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">×</button>
                 </div>
@@ -431,6 +435,60 @@ export default function NewInspection() {
             : 'שלח בחינה'}
         </button>
       </form>
+
+      {/* Photo preview lightbox */}
+      {lightbox !== null && (() => {
+        const { items, index } = lightbox
+        const item = items[index]
+        return (
+          <div
+            className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
+            onClick={() => setLightbox(null)}
+            onTouchStart={(e) => setLbTouchStartX(e.touches[0].clientX)}
+            onTouchEnd={(e) => {
+              if (lbTouchStartX === null) return
+              const delta = lbTouchStartX - e.changedTouches[0].clientX
+              if (Math.abs(delta) > 50) {
+                if (delta > 0) setLightbox((lb) => ({ ...lb, index: Math.min(items.length - 1, lb.index + 1) }))
+                else setLightbox((lb) => ({ ...lb, index: Math.max(0, lb.index - 1) }))
+              }
+              setLbTouchStartX(null)
+            }}
+          >
+            <button className="absolute top-4 left-4 text-white text-3xl z-10">×</button>
+            <button
+              className="absolute right-4 text-white text-3xl px-4 z-10"
+              onClick={(e) => { e.stopPropagation(); setLightbox((lb) => ({ ...lb, index: Math.max(0, lb.index - 1) })) }}
+            >›</button>
+
+            {isVideoFile(item.file) ? (
+              <video
+                key={item.preview}
+                src={item.preview}
+                className="max-h-screen max-w-screen object-contain"
+                controls
+                autoPlay
+                playsInline
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <img
+                src={item.preview}
+                className="max-h-screen max-w-screen object-contain"
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
+
+            <button
+              className="absolute left-4 text-white text-3xl px-4 z-10"
+              onClick={(e) => { e.stopPropagation(); setLightbox((lb) => ({ ...lb, index: Math.min(items.length - 1, lb.index + 1) })) }}
+            >‹</button>
+            <span className="absolute bottom-4 text-white text-sm">
+              {index + 1} / {items.length}
+            </span>
+          </div>
+        )
+      })()}
     </div>
   )
 }

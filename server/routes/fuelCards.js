@@ -55,6 +55,23 @@ router.post('/', requireAuth, async (req, res) => {
   }
 });
 
+// ── GET /api/fuel-cards/deleted — all deleted cards with full log history ─────
+// Must be defined before /:cardId routes so 'deleted' isn't treated as a cardId.
+router.get('/deleted', requireAuth, async (req, res) => {
+  try {
+    const deletedCards = await FuelCard.find({ active: false }).sort({ lastUpdated: -1 });
+    const result = await Promise.all(
+      deletedCards.map(async (card) => {
+        const logs = await FuelCardLog.find({ cardId: card.cardId }).sort({ createdAt: -1 });
+        return { card, logs };
+      })
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── POST /api/fuel-cards/share-token — generate or retrieve share token ──────
 // Must come before /:cardId routes to avoid being shadowed by the param.
 router.post('/share-token', requireAuth, async (req, res) => {

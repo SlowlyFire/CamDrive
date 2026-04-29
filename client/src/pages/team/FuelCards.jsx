@@ -59,6 +59,10 @@ export default function FuelCards() {
   }
 
   async function submit() {
+    if (!form.isEmpty && (form.liters === '' || form.liters == null)) {
+      setError('יש להזין יתרת ליטרים')
+      return
+    }
     setSubmitting(true)
     setError('')
     try {
@@ -104,10 +108,9 @@ export default function FuelCards() {
             <p className="font-semibold">אין כרטיסי דלק פעילים</p>
           </div>
         ) : (
-          cards.map((card) => {
+          cards.filter((card) => card.status !== 'empty').map((card) => {
             const isTakenByMe = card.status === 'taken' && card.currentHolder === myName
             const isTakenByOther = card.status === 'taken' && card.currentHolder !== myName
-            const isEmpty = card.status === 'empty'
 
             return (
               <div key={card._id} className="bg-white rounded-xl border border-gray-200 p-4">
@@ -143,29 +146,16 @@ export default function FuelCards() {
                   </button>
                 )}
                 {isTakenByMe && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => openReturn(card)}
-                      className="flex-1 min-w-0 py-2.5 bg-green-600 text-white font-bold rounded-xl text-sm active:opacity-80"
-                    >
-                      להחזיר לחמל
-                    </button>
-                    <button
-                      onClick={() => openReturn(card, true)}
-                      className="flex-1 min-w-0 py-2.5 bg-red-600 text-white font-bold rounded-xl text-sm active:opacity-80"
-                    >
-                      🔴 ריק
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => openReturn(card)}
+                    className="w-full py-2.5 bg-green-600 text-white font-bold rounded-xl text-sm active:opacity-80"
+                  >
+                    להחזיר כרטיס
+                  </button>
                 )}
                 {isTakenByOther && (
                   <p className="text-center text-sm text-yellow-700 font-semibold py-1 break-words">
                     🔒 נמצא אצל {card.currentHolder}
-                  </p>
-                )}
-                {isEmpty && (
-                  <p className="text-center text-sm text-red-600 font-semibold py-1">
-                    🔴 ריק — יש להחזיר למשרד
                   </p>
                 )}
               </div>
@@ -232,13 +222,13 @@ export default function FuelCards() {
             {/* Empty toggle (return only) */}
             {action.type === 'return' && (
               <label className="flex items-center gap-3 cursor-pointer">
+                <span className="font-bold text-red-600">הכרטיס ריק</span>
                 <div
                   onClick={() => setForm((f) => ({ ...f, isEmpty: !f.isEmpty, liters: '' }))}
-                  className={`w-12 h-6 rounded-full transition-colors ${form.isEmpty ? 'bg-red-600' : 'bg-gray-300'}`}
+                  className={`relative w-12 h-6 rounded-full transition-colors cursor-pointer shrink-0 ${form.isEmpty ? 'bg-red-600' : 'bg-gray-300'}`}
                 >
-                  <div className={`w-6 h-6 bg-white rounded-full shadow transition-transform ${form.isEmpty ? 'translate-x-6' : 'translate-x-0'}`} />
+                  <div className={`absolute top-0 w-6 h-6 bg-white rounded-full shadow transition-all ${form.isEmpty ? 'left-6' : 'left-0'}`} />
                 </div>
-                <span className="font-bold text-red-600">הכרטיס ריק</span>
               </label>
             )}
 
@@ -246,7 +236,7 @@ export default function FuelCards() {
 
             <button
               onClick={submit}
-              disabled={submitting || !form.person.trim()}
+              disabled={submitting || !form.person.trim() || (!form.isEmpty && form.liters === '')}
               className="w-full py-4 bg-blue-900 text-white font-black text-lg rounded-xl disabled:opacity-50"
             >
               {submitting ? <Spinner size={5} /> : action.type === 'take' ? 'לקחת' : 'להחזיר'}
