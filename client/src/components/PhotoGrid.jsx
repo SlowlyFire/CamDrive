@@ -108,11 +108,19 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
             setTouchStartX(null)
           }}
         >
-          <button className="absolute top-4 left-4 text-white text-3xl">×</button>
+          {/* Close — top-right */}
           <button
-            className="absolute right-4 text-white text-3xl px-4"
-            onClick={(e) => { e.stopPropagation(); setLightbox((l) => Math.max(0, l - 1)) }}
-          >›</button>
+            className="absolute top-4 right-4 z-10 w-11 h-11 rounded-full bg-black/60 text-white text-2xl font-bold flex items-center justify-center"
+            onClick={(e) => { e.stopPropagation(); setLightbox(null) }}
+          >×</button>
+
+          {/* Prev arrow — right side */}
+          {lightbox > 0 && (
+            <button
+              className="absolute right-4 top-1/2 -translate-y-1/2 z-10 w-14 h-14 rounded-full bg-black/60 text-white text-4xl flex items-center justify-center"
+              onClick={(e) => { e.stopPropagation(); setLightbox((l) => l - 1) }}
+            >›</button>
+          )}
 
           {isVideoFilename(photos[lightbox].filename) ? (
             <video
@@ -133,11 +141,15 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
             />
           )}
 
-          <button
-            className="absolute left-4 text-white text-3xl px-4"
-            onClick={(e) => { e.stopPropagation(); setLightbox((l) => Math.min(photos.length - 1, l + 1)) }}
-          >‹</button>
-          <span className="absolute bottom-4 text-white text-sm">
+          {/* Next arrow — left side */}
+          {lightbox < photos.length - 1 && (
+            <button
+              className="absolute left-4 top-1/2 -translate-y-1/2 z-10 w-14 h-14 rounded-full bg-black/60 text-white text-4xl flex items-center justify-center"
+              onClick={(e) => { e.stopPropagation(); setLightbox((l) => l + 1) }}
+            >‹</button>
+          )}
+
+          <span className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white text-sm bg-black/40 px-3 py-1 rounded-full">
             {lightbox + 1} / {photos.length}
           </span>
         </div>

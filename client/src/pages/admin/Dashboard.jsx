@@ -520,8 +520,11 @@ function FuelCardsTab() {
   const [showAdd, setShowAdd] = useState(false)
   const [newCardId, setNewCardId] = useState('')
   const [newFuelType, setNewFuelType] = useState('סולר')
+  const [newLiters, setNewLiters] = useState('')
+  const [checkingBalance, setCheckingBalance] = useState(false)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState('')
+  const [filters, setFilters] = useState({ available: true, taken: true, empty: true })
   const [deleteConfirm, setDeleteConfirm] = useState(null) // card id
   const [historyCard, setHistoryCard] = useState(null) // card object
   const [history, setHistory] = useState([])
@@ -545,14 +548,32 @@ function FuelCardsTab() {
     setAdding(true)
     setAddError('')
     try {
-      await api.post('/fuel-cards', { cardId: newCardId.trim(), fuelType: newFuelType })
+      await api.post('/fuel-cards', {
+        cardId: newCardId.trim(),
+        fuelType: newFuelType,
+        litersRemaining: newLiters !== '' ? Number(newLiters) : null,
+      })
       setNewCardId('')
+      setNewLiters('')
       setShowAdd(false)
       load()
     } catch (err) {
       setAddError(err.response?.data?.error || 'שגיאה')
     } finally {
       setAdding(false)
+    }
+  }
+
+  async function checkBalance() {
+    if (!newCardId.trim()) return
+    setCheckingBalance(true)
+    try {
+      const r = await api.get(`/fuel-cards/${newCardId.trim()}/check-balance`)
+      setNewLiters(String(r.data.liters))
+    } catch (err) {
+      setAddError(err.response?.data?.error || 'שגיאה בחיבור לאתר גודי')
+    } finally {
+      setCheckingBalance(false)
     }
   }
 
@@ -676,6 +697,24 @@ function FuelCardsTab() {
               </button>
             ))}
           </div>
+          {/* Liters */}
+          <div className="flex gap-2 items-stretch">
+            <input
+              type="number"
+              value={newLiters}
+              onChange={(e) => setNewLiters(e.target.value)}
+              placeholder="ליטרים (אופציונלי)"
+              className="flex-1 border-2 border-gray-300 rounded-xl px-4 py-3 text-base focus:border-blue-900 outline-none"
+            />
+            <button
+              type="button"
+              onClick={checkBalance}
+              disabled={checkingBalance || !newCardId.trim()}
+              className="px-3 py-2 bg-blue-50 border-2 border-blue-200 text-blue-800 font-bold rounded-xl text-xs disabled:opacity-50 whitespace-nowrap"
+            >
+              {checkingBalance ? '…' : '⛽ יתרה אוטומטית'}
+            </button>
+          </div>
           {addError && <p className="text-red-600 text-sm">{addError}</p>}
           <div className="flex gap-2">
             <button type="button" onClick={() => setShowAdd(false)} className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm">ביטול</button>
@@ -686,15 +725,32 @@ function FuelCardsTab() {
         </form>
       )}
 
+      {/* Filter buttons */}
+      <div className="flex gap-2">
+        {[
+          { key: 'available', label: 'בחמל',  on: 'bg-green-600 text-white border-green-600',  off: 'bg-white text-green-700 border-green-600' },
+          { key: 'taken',     label: 'נלקחו', on: 'bg-yellow-500 text-white border-yellow-500', off: 'bg-white text-yellow-700 border-yellow-500' },
+          { key: 'empty',     label: 'ריקים', on: 'bg-red-600 text-white border-red-600',       off: 'bg-white text-red-600 border-red-600' },
+        ].map(({ key, label, on, off }) => (
+          <button
+            key={key}
+            onClick={() => setFilters((f) => ({ ...f, [key]: !f[key] }))}
+            className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-colors ${filters[key] ? on : off}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Cards list */}
-      {cards.length === 0 ? (
+      {cards.filter((c) => filters[c.status]).length === 0 ? (
         <div className="text-center py-12 text-gray-400">
           <p className="text-4xl mb-2">⛽</p>
-          <p className="font-semibold">אין כרטיסי דלק — הוסף למעלה</p>
+          <p className="font-semibold">{cards.length === 0 ? 'אין כרטיסי דלק — הוסף למעלה' : 'אין כרטיסים לפילטר הנוכחי'}</p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {cards.map((card) => (
+          {cards.filter((c) => filters[c.status]).map((card) => (
             <div
               key={card._id}
               className="bg-white rounded-xl border border-gray-200 p-4 cursor-pointer active:bg-gray-50"
@@ -740,10 +796,10 @@ function FuelCardsTab() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-6" dir="rtl">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm flex flex-col gap-4">
             <p className="font-bold text-gray-800">למחוק את הכרטיס?</p>
-            <p className="text-sm text-gray-500">הכרטיס יוסר מהרשימה (ניתן לשחזר ידנית מ-DB).</p>
+            <p className="text-sm text-gray-600 font-semibold">לחץ אשר רק במידה והכרטיס הוחזר למשרד לוגיסטיקה</p>
             <div className="flex gap-2">
               <button onClick={() => setDeleteConfirm(null)} className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl">ביטול</button>
-              <button onClick={() => deleteCard(deleteConfirm)} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl">מחק</button>
+              <button onClick={() => deleteCard(deleteConfirm)} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl">אשר</button>
             </div>
           </div>
         </div>

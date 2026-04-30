@@ -25,6 +25,7 @@ export default function FuelShare() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [lastRefresh, setLastRefresh] = useState(null)
+  const [filters, setFilters] = useState({ available: true, taken: true, empty: true })
 
   const load = useCallback(() => {
     api.get(`/fuel-cards/share/${token}`)
@@ -96,6 +97,23 @@ export default function FuelShare() {
         </div>
       </div>
 
+      {/* Filter buttons */}
+      <div className="px-4 pt-3 flex gap-2">
+        {[
+          { key: 'available', label: 'בחמל',  on: 'bg-green-600 text-white border-green-600',  off: 'bg-white text-green-700 border-green-600' },
+          { key: 'taken',     label: 'נלקחו', on: 'bg-yellow-500 text-white border-yellow-500', off: 'bg-white text-yellow-700 border-yellow-500' },
+          { key: 'empty',     label: 'ריקים', on: 'bg-red-600 text-white border-red-600',       off: 'bg-white text-red-600 border-red-600' },
+        ].map(({ key, label, on, off }) => (
+          <button
+            key={key}
+            onClick={() => setFilters((f) => ({ ...f, [key]: !f[key] }))}
+            className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-colors ${filters[key] ? on : off}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Cards list */}
       <div className="p-4 flex flex-col gap-3">
         {cards.length === 0 ? (
@@ -104,7 +122,7 @@ export default function FuelShare() {
             <p className="font-semibold">אין כרטיסי דלק</p>
           </div>
         ) : (
-          cards.map((card) => (
+          cards.filter((c) => filters[c.status]).map((card) => (
             <div key={card._id} className="bg-white rounded-xl border border-gray-200 p-4">
               <div className="flex items-center justify-between gap-2">
                 <div>

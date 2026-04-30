@@ -376,7 +376,8 @@ export default function NewInspection() {
             <div className="grid grid-cols-4 gap-1 mt-2">
               {documents.map((d, i) => (
                 <div key={i} className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden">
-                  <img src={d.preview} className="w-full h-full object-cover" alt="" />
+                  <img src={d.preview} className="w-full h-full object-cover cursor-pointer" alt=""
+                    onClick={() => setLightbox({ items: documents, index: i })} />
                   <button type="button" onClick={() => removeDocument(i)}
                     className="absolute top-0.5 left-0.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">×</button>
                 </div>
@@ -436,7 +437,7 @@ export default function NewInspection() {
         </button>
       </form>
 
-      {/* Photo preview lightbox */}
+      {/* Photo/document preview lightbox */}
       {lightbox !== null && (() => {
         const { items, index } = lightbox
         const item = items[index]
@@ -455,11 +456,19 @@ export default function NewInspection() {
               setLbTouchStartX(null)
             }}
           >
-            <button className="absolute top-4 left-4 text-white text-3xl z-10">×</button>
+            {/* Close — top-right */}
             <button
-              className="absolute right-4 text-white text-3xl px-4 z-10"
-              onClick={(e) => { e.stopPropagation(); setLightbox((lb) => ({ ...lb, index: Math.max(0, lb.index - 1) })) }}
-            >›</button>
+              className="absolute top-4 right-4 z-10 w-11 h-11 rounded-full bg-black/60 text-white text-2xl font-bold flex items-center justify-center"
+              onClick={(e) => { e.stopPropagation(); setLightbox(null) }}
+            >×</button>
+
+            {/* Prev arrow — right side */}
+            {index > 0 && (
+              <button
+                className="absolute right-4 top-1/2 -translate-y-1/2 z-10 w-14 h-14 rounded-full bg-black/60 text-white text-4xl flex items-center justify-center"
+                onClick={(e) => { e.stopPropagation(); setLightbox((lb) => ({ ...lb, index: lb.index - 1 })) }}
+              >›</button>
+            )}
 
             {isVideoFile(item.file) ? (
               <video
@@ -479,11 +488,15 @@ export default function NewInspection() {
               />
             )}
 
-            <button
-              className="absolute left-4 text-white text-3xl px-4 z-10"
-              onClick={(e) => { e.stopPropagation(); setLightbox((lb) => ({ ...lb, index: Math.min(items.length - 1, lb.index + 1) })) }}
-            >‹</button>
-            <span className="absolute bottom-4 text-white text-sm">
+            {/* Next arrow — left side */}
+            {index < items.length - 1 && (
+              <button
+                className="absolute left-4 top-1/2 -translate-y-1/2 z-10 w-14 h-14 rounded-full bg-black/60 text-white text-4xl flex items-center justify-center"
+                onClick={(e) => { e.stopPropagation(); setLightbox((lb) => ({ ...lb, index: lb.index + 1 })) }}
+              >‹</button>
+            )}
+
+            <span className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white text-sm bg-black/40 px-3 py-1 rounded-full">
               {index + 1} / {items.length}
             </span>
           </div>

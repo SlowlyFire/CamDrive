@@ -1,5 +1,6 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const http = require('http');
 const FuelCard = require('../models/FuelCard');
 const FuelCardLog = require('../models/FuelCardLog');
 const FuelShareToken = require('../models/FuelShareToken');
@@ -30,6 +31,10 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'סוג דלק לא תקין — יש לבחור סולר או בנזין' });
     }
 
+    const litersRemaining = req.body.litersRemaining != null && req.body.litersRemaining !== ''
+      ? Number(req.body.litersRemaining)
+      : null;
+
     // Check for existing card with same ID regardless of active status
     const existing = await FuelCard.findOne({ cardId });
     if (existing) {
@@ -41,13 +46,13 @@ router.post('/', requireAuth, async (req, res) => {
       existing.active = true;
       existing.status = 'available';
       existing.currentHolder = null;
-      existing.litersRemaining = null;
+      existing.litersRemaining = litersRemaining;
       existing.lastUpdated = new Date();
       await existing.save();
       return res.status(201).json(existing);
     }
 
-    const card = new FuelCard({ cardId, fuelType });
+    const card = new FuelCard({ cardId, fuelType, litersRemaining });
     await card.save();
     res.status(201).json(card);
   } catch (err) {
@@ -110,6 +115,57 @@ router.get('/:cardId/history', requireAuth, async (req, res) => {
   }
 });
 
+// ── GET /api/fuel-cards/:cardId/check-balance — query Goodi SOAP API ─────────
+router.get('/:cardId/check-balance', requireAuth, async (req, res) => {
+  const cardSn = req.params.cardId;
+  const soapBody = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="http://tempuri.org/">
+  <soap:Body>
+    <tns:GetCashCardsBySN>
+      <cardsn>${cardSn}</cardsn>
+    </tns:GetCashCardsBySN>
+  </soap:Body>
+</soap:Envelope>`;
+
+  try {
+    const xml = await new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'www.goodi.co.il',
+        port: 80,
+        path: '/AdminFuel/WS/FuelWSAdm.asmx',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset=utf-8',
+          'SOAPAction': 'http://tempuri.org/GetCashCardsBySN',
+          'Content-Length': Buffer.byteLength(soapBody),
+        },
+      };
+      const req = http.request(options, (response) => {
+        let data = '';
+        response.on('data', (chunk) => { data += chunk; });
+        response.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.setTimeout(8000, () => { req.destroy(); reject(new Error('timeout')); });
+      req.write(soapBody);
+      req.end();
+    });
+
+    // Parse liters left from XML response
+    const match = xml.match(/<total_x0020_liter_x0020_left[^>]*>([^<]*)<\/total_x0020_liter_x0020_left>/);
+    if (!match) {
+      return res.status(404).json({ error: 'כרטיס לא נמצא באתר גודי' });
+    }
+    const liters = parseFloat(match[1]);
+    if (isNaN(liters)) {
+      return res.status(404).json({ error: 'לא ניתן לקרוא יתרה' });
+    }
+    res.json({ liters });
+  } catch (err) {
+    res.status(502).json({ error: 'שגיאה בחיבור לאתר גודי' });
+  }
+});
+
 // ── POST /api/fuel-cards/:cardId/take — team member takes a card ─────────────
 router.post('/:cardId/take', requireTeamCode, async (req, res) => {
   try {
@@ -156,7 +212,8 @@ router.post('/:cardId/return', requireTeamCode, async (req, res) => {
       ? Number(req.body.litersRemaining)
       : null;
     const notes = sanitize(req.body.notes || '').slice(0, 500);
-    const isEmpty = req.body.isEmpty === true || req.body.isEmpty === 'true';
+    // Auto-empty when 0 liters entered, or when isEmpty flag is set explicitly
+    const isEmpty = req.body.isEmpty === true || req.body.isEmpty === 'true' || liters === 0;
 
     card.status = isEmpty ? 'empty' : 'available';
     card.currentHolder = null;
