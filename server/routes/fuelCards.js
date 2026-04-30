@@ -136,70 +136,13 @@ router.get('/:cardId/history', requireAuth, async (req, res) => {
   }
 });
 
-// ── GET /api/fuel-cards/:cardId/check-balance — query Goodi (debug mode) ─────
+// ── GET /api/fuel-cards/:cardId/check-balance — scrape Goodi WebForms ────────
+// Response HTML has label/value td pairs. We look for the td after "ליטרים שנותרו:"
 router.get('/:cardId/check-balance', requireAuth, async (req, res) => {
   const cardSn = req.params.cardId;
-  const debug = {};
-
-  // ════════════════════════════════════════════════════════════════════════════
-  // ATTEMPT 1 — SOAP webservice
-  // ════════════════════════════════════════════════════════════════════════════
-  const soapBody = `<?xml version="1.0" encoding="utf-8"?>\r\n<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="http://tempuri.org/">\r\n  <soap:Body>\r\n    <tns:GetCashCardsBySN>\r\n      <cardsn>${cardSn}</cardsn>\r\n    </tns:GetCashCardsBySN>\r\n  </soap:Body>\r\n</soap:Envelope>`;
-
-  console.log(`\n[check-balance] ══ SOAP attempt ══ card=${cardSn}`);
-  console.log(`[check-balance] SOAP body:\n${soapBody}`);
 
   try {
-    const soapRes = await makeRequest({
-      protocol: 'http:',
-      hostname: 'www.goodi.co.il',
-      port: 80,
-      path: '/AdminFuel/WS/FuelWSAdm.asmx',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/xml; charset=utf-8',
-        'SOAPAction': '"http://tempuri.org/GetCashCardsBySN"',
-        'Content-Length': Buffer.byteLength(soapBody),
-        'Host': 'www.goodi.co.il',
-        'Accept': 'text/xml',
-      },
-    }, soapBody);
-
-    console.log(`[check-balance] SOAP status: ${soapRes.status}`);
-    console.log(`[check-balance] SOAP headers: ${JSON.stringify(soapRes.headers)}`);
-    console.log(`[check-balance] SOAP body (first 2000 chars):\n${soapRes.body.slice(0, 2000)}`);
-
-    debug.soap = {
-      status: soapRes.status,
-      headers: soapRes.headers,
-      bodyPreview: soapRes.body.slice(0, 2000),
-    };
-
-    // Try to parse liters from SOAP response
-    const literMatch = soapRes.body.match(/<total_x0020_liter_x0020_left[^>]*>([^<]+)<\/total_x0020_liter_x0020_left>/i);
-    if (literMatch) {
-      const liters = parseFloat(literMatch[1]);
-      console.log(`[check-balance] SOAP ✅ liters found: ${liters}`);
-      if (!isNaN(liters)) {
-        return res.json({ liters, source: 'soap', debug });
-      }
-    }
-    console.log(`[check-balance] SOAP — liters tag not found, trying WebForms...`);
-  } catch (soapErr) {
-    console.log(`[check-balance] SOAP error: ${soapErr.message}`);
-    debug.soapError = soapErr.message;
-  }
-
-  // ════════════════════════════════════════════════════════════════════════════
-  // ATTEMPT 2 — ASP.NET WebForms scrape
-  // Step A: GET the page to collect cookies + hidden ASP.NET fields
-  // Step B: POST the form with those fields
-  // ════════════════════════════════════════════════════════════════════════════
-  console.log(`\n[check-balance] ══ WebForms attempt ══ card=${cardSn}`);
-
-  try {
-    // Step A — GET page
-    console.log(`[check-balance] GET https://fueladmin.goodi.co.il/_fuel/`);
+    // Step 1 — GET page: collect session cookie + ASP.NET hidden fields
     const getRes = await makeRequest({
       protocol: 'https:',
       hostname: 'fueladmin.goodi.co.il',
@@ -212,52 +155,28 @@ router.get('/:cardId/check-balance', requireAuth, async (req, res) => {
       },
     });
 
-    console.log(`[check-balance] GET status: ${getRes.status}`);
-    console.log(`[check-balance] GET set-cookie: ${JSON.stringify(getRes.headers['set-cookie'])}`);
-
-    debug.webforms_get = {
-      status: getRes.status,
-      setCookie: getRes.headers['set-cookie'],
-    };
-
-    // Extract hidden fields from HTML
     const extract = (html, name) => {
       const m = html.match(new RegExp(`name="${name}"[^>]*value="([^"]*)"`, 'i'))
                || html.match(new RegExp(`id="${name}"[^>]*value="([^"]*)"`, 'i'));
       return m ? m[1] : null;
     };
 
-    const viewstate    = extract(getRes.body, '__VIEWSTATE');
-    const vsGenerator  = extract(getRes.body, '__VIEWSTATEGENERATOR');
-    const eventVal     = extract(getRes.body, '__EVENTVALIDATION');
-    const tssmVal      = extract(getRes.body, 'RadStyleSheetManager1_TSSM') || '';
-    const tsmVal       = extract(getRes.body, 'RadScriptManager1_TSM') || '';
-
-    console.log(`[check-balance] __VIEWSTATE length: ${viewstate ? viewstate.length : 'NOT FOUND'}`);
-    console.log(`[check-balance] __VIEWSTATEGENERATOR: ${vsGenerator}`);
-    console.log(`[check-balance] __EVENTVALIDATION length: ${eventVal ? eventVal.length : 'NOT FOUND'}`);
-
-    // Collect cookies from GET response
     const cookies = (getRes.headers['set-cookie'] || [])
       .map((c) => c.split(';')[0])
       .join('; ');
-    console.log(`[check-balance] Cookies: ${cookies}`);
 
-    // Step B — POST form
     const formData = new URLSearchParams({
-      RadStyleSheetManager1_TSSM: tssmVal,
-      RadScriptManager1_TSM:      tsmVal,
-      __VIEWSTATE:                 viewstate || '',
-      __VIEWSTATEGENERATOR:        vsGenerator || '',
-      __EVENTVALIDATION:           eventVal || '',
+      RadStyleSheetManager1_TSSM: extract(getRes.body, 'RadStyleSheetManager1_TSSM') || '',
+      RadScriptManager1_TSM:      extract(getRes.body, 'RadScriptManager1_TSM') || '',
+      __VIEWSTATE:                 extract(getRes.body, '__VIEWSTATE') || '',
+      __VIEWSTATEGENERATOR:        extract(getRes.body, '__VIEWSTATEGENERATOR') || '',
+      __EVENTVALIDATION:           extract(getRes.body, '__EVENTVALIDATION') || '',
       ddSearchSelect:              '3',   // כרטיס קש
       tbSearch:                    cardSn,
       btnSearch:                   'חפש',
     }).toString();
 
-    console.log(`[check-balance] POST body (params only, no state): ddSearchSelect=3&tbSearch=${cardSn}&btnSearch=חפש`);
-    console.log(`[check-balance] POST full body length: ${formData.length}`);
-
+    // Step 2 — POST form with card ID
     const postRes = await makeRequest({
       protocol: 'https:',
       hostname: 'fueladmin.goodi.co.il',
@@ -274,57 +193,25 @@ router.get('/:cardId/check-balance', requireAuth, async (req, res) => {
       },
     }, formData);
 
-    console.log(`[check-balance] POST status: ${postRes.status}`);
-    console.log(`[check-balance] POST body (first 3000 chars):\n${postRes.body.slice(0, 3000)}`);
+    // Response HTML has label/value <td> pairs:
+    // <td>ליטרים שנותרו:</td><td>5.4300</td>
+    // Match the <td> that immediately follows the "ליטרים שנותרו" label cell.
+    const remainingMatch = postRes.body.match(
+      /ליטרים שנותרו[^<]*<\/td>\s*<td[^>]*>\s*([\d.]+)/
+    );
 
-    debug.webforms_post = {
-      status: postRes.status,
-      bodyPreview: postRes.body.slice(0, 3000),
-    };
-
-    // Log full response body so we can see the full HTML structure
-    console.log(`[check-balance] POST full body length: ${postRes.body.length}`);
-    if (postRes.body.length > 3000) {
-      console.log(`[check-balance] POST body continuation (3000-6000):\n${postRes.body.slice(3000, 6000)}`);
+    if (!remainingMatch) {
+      return res.status(404).json({ error: 'כרטיס לא נמצא באתר גודי' });
     }
 
-    // Try common patterns for balance in response HTML
-    const patterns = [
-      /יתרה[^:]*:\s*([\d.]+)/,
-      /liter[^>]*>\s*([\d.]+)/i,
-      /total_liter_left[^>]*>\s*([\d.]+)/i,
-      /(\d+(?:\.\d+)?)\s*ליטר/,
-      /<td[^>]*>\s*([\d.]+)\s*<\/td>/g,
-    ];
-
-    let parsedLiters = null;
-    for (const pat of patterns.slice(0, -1)) {
-      const m = postRes.body.match(pat);
-      if (m) {
-        console.log(`[check-balance] Pattern "${pat}" matched: ${m[1]}`);
-        parsedLiters = parseFloat(m[1]);
-        break;
-      }
+    const liters = parseFloat(remainingMatch[1]);
+    if (isNaN(liters)) {
+      return res.status(404).json({ error: 'לא ניתן לקרוא יתרה' });
     }
 
-    // Log all table cells for analysis
-    const tdMatches = [...postRes.body.matchAll(/<td[^>]*>([^<]{1,50})<\/td>/gi)]
-      .map((m) => m[1].trim())
-      .filter((v) => v.length > 0);
-    console.log(`[check-balance] All <td> text values:`, tdMatches.join(' | '));
-    debug.tdValues = tdMatches;
-
-    if (parsedLiters !== null && !isNaN(parsedLiters)) {
-      return res.json({ liters: parsedLiters, source: 'webforms', debug });
-    }
-
-    // Could not parse — return full debug so client can show it
-    return res.status(422).json({ error: 'לא ניתן לנתח את התשובה מגודי', debug });
-
-  } catch (wfErr) {
-    console.log(`[check-balance] WebForms error: ${wfErr.message}`);
-    debug.webformsError = wfErr.message;
-    return res.status(502).json({ error: 'שגיאה בחיבור לאתר גודי', debug });
+    res.json({ liters });
+  } catch (err) {
+    res.status(502).json({ error: 'שגיאה בחיבור לאתר גודי' });
   }
 });
 
