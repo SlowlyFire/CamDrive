@@ -567,11 +567,20 @@ function FuelCardsTab() {
   async function checkBalance() {
     if (!newCardId.trim()) return
     setCheckingBalance(true)
+    setAddError('')
     try {
       const r = await api.get(`/fuel-cards/${newCardId.trim()}/check-balance`)
-      setNewLiters(String(r.data.liters))
+      if (r.data.liters != null) {
+        setNewLiters(String(r.data.liters))
+        console.log('[checkBalance] success, source:', r.data.source, 'debug:', r.data.debug)
+      } else {
+        console.log('[checkBalance] no liters in response:', r.data)
+        setAddError('לא ניתן לקרוא יתרה — ראה console')
+      }
     } catch (err) {
-      setAddError(err.response?.data?.error || 'שגיאה בחיבור לאתר גודי')
+      const errData = err.response?.data
+      console.log('[checkBalance] error response:', JSON.stringify(errData, null, 2))
+      setAddError((errData?.error || 'שגיאה') + ' — ראה console לפרטים')
     } finally {
       setCheckingBalance(false)
     }
