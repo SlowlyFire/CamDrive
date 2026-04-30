@@ -19,6 +19,17 @@ function formatTime(date) {
   return new Date(date).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
 }
 
+function formatCheckedAt(date) {
+  if (!date) return null
+  const d = new Date(date)
+  const now = new Date()
+  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+  if (d.toDateString() === now.toDateString()) return `עודכן: ${time}`
+  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return `עודכן: אתמול ${time}`
+  return `עודכן: ${d.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' })} ${time}`
+}
+
 export default function FuelShare() {
   const { token } = useParams()
   const [cards, setCards] = useState([])
@@ -132,6 +143,9 @@ export default function FuelShare() {
                   )}
                   {card.litersRemaining != null && (
                     <p className="text-sm text-gray-500">יתרה: {card.litersRemaining} ל'</p>
+                  )}
+                  {card.balanceCheckedAt && (
+                    <p className="text-xs text-blue-400 mt-0.5">{formatCheckedAt(card.balanceCheckedAt)}</p>
                   )}
                 </div>
                 <div className="flex flex-col items-end gap-1">

@@ -10,6 +10,7 @@ const fuelCardSchema = new mongoose.Schema({
   },
   currentHolder: { type: String, default: null },
   litersRemaining: { type: Number, default: null },
+  balanceCheckedAt: { type: Date, default: null },
   lastUpdated: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now },
   active: { type: Boolean, default: true },

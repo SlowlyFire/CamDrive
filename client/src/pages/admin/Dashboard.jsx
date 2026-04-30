@@ -514,6 +514,17 @@ function formatRelative(date) {
   return `לפני ${Math.floor(hrs / 24)} ימים`
 }
 
+function formatCheckedAt(date) {
+  if (!date) return null
+  const d = new Date(date)
+  const now = new Date()
+  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+  if (d.toDateString() === now.toDateString()) return `עודכן: ${time}`
+  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return `עודכן: אתמול ${time}`
+  return `עודכן: ${d.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' })} ${time}`
+}
+
 function FuelCardsTab() {
   const [cards, setCards] = useState([])
   const [loading, setLoading] = useState(true)
@@ -521,8 +532,8 @@ function FuelCardsTab() {
   const [newCardId, setNewCardId] = useState('')
   const [newFuelType, setNewFuelType] = useState('סולר')
   const [newLiters, setNewLiters] = useState('')
-  const [checkingBalance, setCheckingBalance] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [refreshingCards, setRefreshingCards] = useState(new Set())
   const [addError, setAddError] = useState('')
   const [filters, setFilters] = useState({ available: true, taken: true, empty: true })
   const [deleteConfirm, setDeleteConfirm] = useState(null) // card id
@@ -564,17 +575,15 @@ function FuelCardsTab() {
     }
   }
 
-  async function checkBalance() {
-    if (!newCardId.trim()) return
-    setCheckingBalance(true)
-    setAddError('')
+  async function refreshBalance(card) {
+    setRefreshingCards((s) => new Set([...s, card._id]))
     try {
-      const r = await api.get(`/fuel-cards/${newCardId.trim()}/check-balance`)
-      setNewLiters(String(r.data.liters))
-    } catch (err) {
-      setAddError(err.response?.data?.error || 'שגיאה בחיבור לאתר גודי')
+      const r = await api.post(`/fuel-cards/${card.cardId}/refresh-balance`)
+      setCards((prev) => prev.map((c) => c._id === card._id ? r.data : c))
+    } catch {
+      // silent — Goodi might be unreachable
     } finally {
-      setCheckingBalance(false)
+      setRefreshingCards((s) => { const n = new Set(s); n.delete(card._id); return n; })
     }
   }
 
@@ -698,24 +707,14 @@ function FuelCardsTab() {
               </button>
             ))}
           </div>
-          {/* Liters */}
-          <div className="flex gap-2 items-stretch">
-            <input
-              type="number"
-              value={newLiters}
-              onChange={(e) => setNewLiters(e.target.value)}
-              placeholder="ליטרים (אופציונלי)"
-              className="flex-1 border-2 border-gray-300 rounded-xl px-4 py-3 text-base focus:border-blue-900 outline-none"
-            />
-            <button
-              type="button"
-              onClick={checkBalance}
-              disabled={checkingBalance || !newCardId.trim()}
-              className="px-3 py-2 bg-blue-50 border-2 border-blue-200 text-blue-800 font-bold rounded-xl text-xs disabled:opacity-50 whitespace-nowrap"
-            >
-              {checkingBalance ? '…' : '⛽ יתרה אוטומטית'}
-            </button>
-          </div>
+          {/* Liters — optional, auto-fetched from Goodi after creation */}
+          <input
+            type="number"
+            value={newLiters}
+            onChange={(e) => setNewLiters(e.target.value)}
+            placeholder="ליטרים (אופציונלי)"
+            className="border-2 border-gray-300 rounded-xl px-4 py-3 text-base focus:border-blue-900 outline-none"
+          />
           {addError && <p className="text-red-600 text-sm">{addError}</p>}
           <div className="flex gap-2">
             <button type="button" onClick={() => setShowAdd(false)} className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl text-sm">ביטול</button>
@@ -765,7 +764,29 @@ function FuelCardsTab() {
                     <p className="text-sm text-gray-600">אצל: {card.currentHolder}</p>
                   )}
                   {card.litersRemaining != null && (
-                    <p className="text-sm text-gray-500">יתרה: {card.litersRemaining} ל'</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm text-gray-500">יתרה: {card.litersRemaining} ל'</p>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); refreshBalance(card) }}
+                        disabled={refreshingCards.has(card._id)}
+                        className="text-blue-500 text-xs disabled:opacity-40 leading-none"
+                        title="רענן יתרה מגודי"
+                      >
+                        {refreshingCards.has(card._id) ? '…' : '🔄'}
+                      </button>
+                    </div>
+                  )}
+                  {!card.litersRemaining && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); refreshBalance(card) }}
+                      disabled={refreshingCards.has(card._id)}
+                      className="text-blue-500 text-xs disabled:opacity-40 mt-0.5"
+                    >
+                      {refreshingCards.has(card._id) ? '…' : '🔄 בדוק יתרה'}
+                    </button>
+                  )}
+                  {card.balanceCheckedAt && (
+                    <p className="text-xs text-blue-400 mt-0.5">{formatCheckedAt(card.balanceCheckedAt)}</p>
                   )}
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">

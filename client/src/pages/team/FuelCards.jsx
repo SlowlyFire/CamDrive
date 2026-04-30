@@ -26,6 +26,17 @@ function formatRelative(date) {
   return `לפני ${Math.floor(hrs / 24)} ימים`
 }
 
+function formatCheckedAt(date) {
+  if (!date) return null
+  const d = new Date(date)
+  const now = new Date()
+  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+  if (d.toDateString() === now.toDateString()) return `עודכן: ${time}`
+  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return `עודכן: אתמול ${time}`
+  return `עודכן: ${d.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' })} ${time}`
+}
+
 export default function FuelCards() {
   const navigate = useNavigate()
   const myName = localStorage.getItem('myName') || ''
@@ -120,6 +131,9 @@ export default function FuelCards() {
                     <p className="font-black text-xl text-gray-900">{card.cardId}</p>
                     {card.litersRemaining != null && (
                       <p className="text-sm text-gray-500 mt-0.5">יתרה: {card.litersRemaining} ל'</p>
+                    )}
+                    {card.balanceCheckedAt && (
+                      <p className="text-xs text-blue-400 mt-0.5">{formatCheckedAt(card.balanceCheckedAt)}</p>
                     )}
                     {card.currentHolder && (
                       <p className="text-sm text-gray-500">אצל: {card.currentHolder}</p>
