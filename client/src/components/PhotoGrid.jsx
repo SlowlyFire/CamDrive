@@ -11,7 +11,8 @@ function isVideoFilename(filename) {
 // Renders a video thumbnail: seeks to 1 s after metadata loads so the
 // browser paints a real frame instead of a black/blank poster.
 // Falls back to a camera-icon placeholder if the video fails to load.
-function VideoThumbnail({ src, filename, onClick }) {
+function VideoThumbnail({ src, fallbackSrc, filename, onClick }) {
+  const [currentSrc, setCurrentSrc] = useState(src)
   const [failed, setFailed] = useState(false)
   const isMov = filename?.toLowerCase().endsWith('.mov')
 
@@ -32,13 +33,16 @@ function VideoThumbnail({ src, filename, onClick }) {
   return (
     <div className="w-full h-full flex items-center justify-center bg-gray-800 cursor-pointer" onClick={onClick}>
       <video
-        src={src}
+        src={currentSrc}
         className="w-full h-full object-cover"
         muted
         playsInline
         preload="metadata"
         onLoadedMetadata={(e) => { e.target.currentTime = 1 }}
-        onError={() => setFailed(true)}
+        onError={() => {
+          if (fallbackSrc && currentSrc !== fallbackSrc) setCurrentSrc(fallbackSrc)
+          else setFailed(true)
+        }}
       />
       <span className="absolute text-white text-3xl pointer-events-none drop-shadow">▶</span>
       {isMov && (
@@ -58,7 +62,14 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
     return <p className="text-gray-400 text-sm text-center py-4">אין תמונות</p>
   }
 
-  const url = (filename) => `/api/inspections/${inspectionId}/${urlBase}/${filename}`
+  // Use pre-generated signedUrl (direct R2) when available; fall back to server proxy
+  const proxyUrl = (filename) => `/api/inspections/${inspectionId}/${urlBase}/${filename}`
+  const bestUrl = (photo) => photo.signedUrl || proxyUrl(photo.filename)
+  // On error: retry via the server proxy endpoint (which generates a fresh presigned URL)
+  const handleImgError = (e, photo) => {
+    const fallback = proxyUrl(photo.filename)
+    if (e.target.src !== fallback) e.target.src = fallback
+  }
 
   return (
     <>
@@ -67,17 +78,19 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
           <div key={photo.filename} className="relative aspect-square bg-gray-100">
             {isVideoFilename(photo.filename) ? (
               <VideoThumbnail
-                src={url(photo.filename)}
+                src={bestUrl(photo)}
+                fallbackSrc={proxyUrl(photo.filename)}
                 filename={photo.originalName || photo.filename}
                 onClick={() => setLightbox(i)}
               />
             ) : (
               <img
-                src={url(photo.filename)}
+                src={bestUrl(photo)}
                 alt={photo.originalName}
                 className="w-full h-full object-cover cursor-pointer"
                 onClick={() => setLightbox(i)}
                 loading="lazy"
+                onError={(e) => handleImgError(e, photo)}
               />
             )}
             {!readOnly && onDelete && (
@@ -125,7 +138,7 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
           {isVideoFilename(photos[lightbox].filename) ? (
             <video
               key={photos[lightbox].filename}
-              src={url(photos[lightbox].filename)}
+              src={bestUrl(photos[lightbox])}
               className="max-h-screen max-w-screen object-contain"
               controls
               autoPlay
@@ -135,9 +148,10 @@ export default function PhotoGrid({ photos, inspectionId, onDelete, readOnly = f
             />
           ) : (
             <img
-              src={url(photos[lightbox].filename)}
+              src={bestUrl(photos[lightbox])}
               className="max-h-screen max-w-screen object-contain"
               onClick={(e) => e.stopPropagation()}
+              onError={(e) => handleImgError(e, photos[lightbox])}
             />
           )}
 

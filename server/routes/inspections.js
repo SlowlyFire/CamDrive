@@ -17,7 +17,24 @@ const {
 } = require('../services/driveService');
 const router = express.Router();
 
+const { getPresignedGetUrl } = require('../services/r2Service');
 const UPLOADS_BASE = path.join(__dirname, '../uploads');
+
+// ── Pre-generate presigned URLs for all R2-backed files ──────────────────
+// Attaches `signedUrl` to each photo/document so the client can load
+// directly from R2 instead of following per-image 302 redirects.
+async function attachSignedUrls(obj) {
+  const TWO_HOURS = 7200;
+  const sign = async (item) => {
+    if (item.r2Key && !item.driveFileId) {
+      try { item.signedUrl = await getPresignedGetUrl(item.r2Key, TWO_HOURS); } catch {}
+    }
+  };
+  await Promise.all([
+    ...(obj.photos || []).map(sign),
+    ...(obj.documents || []).map(sign),
+  ]);
+}
 
 // ── MIME type lookup for serving files ────────────────────────────────────
 const MIME_BY_EXT = {
@@ -215,7 +232,9 @@ router.get('/share/:shareToken', async (req, res) => {
   try {
     const inspection = await Inspection.findOne({ shareToken: req.params.shareToken });
     if (!inspection) return res.status(404).json({ error: 'לא נמצא' });
-    res.json(inspection);
+    const obj = inspection.toObject();
+    await attachSignedUrls(obj);
+    res.json(obj);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -260,8 +279,7 @@ router.get('/:id/photos/:filename', async (req, res) => {
       driveRes.data.pipe(res);
     } else if (photo.r2Key) {
       // Serve from R2 via presigned redirect (pending / rejected)
-      const { getPresignedGetUrl } = require('../services/r2Service');
-      const url = await getPresignedGetUrl(photo.r2Key, 3600);
+      const url = await getPresignedGetUrl(photo.r2Key, 7200);
       return res.redirect(302, url);
     } else {
       // Legacy: local disk fallback (files uploaded before R2 migration)
@@ -292,8 +310,7 @@ router.get('/:id/documents/:filename', async (req, res) => {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       driveRes.data.pipe(res);
     } else if (doc.r2Key) {
-      const { getPresignedGetUrl } = require('../services/r2Service');
-      const url = await getPresignedGetUrl(doc.r2Key, 3600);
+      const url = await getPresignedGetUrl(doc.r2Key, 7200);
       return res.redirect(302, url);
     } else {
       const filePath = path.join(UPLOADS_BASE, inspection._id.toString(), doc.filename);
@@ -326,7 +343,9 @@ router.get('/:id', async (req, res) => {
       }
     }
 
-    res.json(inspection);
+    const obj = inspection.toObject();
+    await attachSignedUrls(obj);
+    res.json(obj);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
