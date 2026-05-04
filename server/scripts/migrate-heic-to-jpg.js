@@ -11,7 +11,7 @@
 
 require('dotenv').config();
 const mongoose = require('mongoose');
-const sharp = require('sharp');
+const convert = require('heic-convert');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
 // ── R2 client ──────────────────────────────────────────────────────────────
@@ -111,8 +111,12 @@ async function main() {
           // Download HEIC from R2
           const heicBuf = await downloadBuffer(oldKey);
 
-          // Convert to JPEG
-          const jpgBuf = await sharp(heicBuf).jpeg({ quality: 80 }).toBuffer();
+          // Convert to JPEG (pure JS — works on macOS without native HEIF libs)
+          const jpgBuf = Buffer.from(await convert({
+            buffer: heicBuf,
+            format: 'JPEG',
+            quality: 0.8,
+          }));
 
           // Upload JPEG with new key
           await uploadBuffer(newKey, jpgBuf, 'image/jpeg');
