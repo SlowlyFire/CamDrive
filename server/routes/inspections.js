@@ -17,16 +17,20 @@ const {
 } = require('../services/driveService');
 const router = express.Router();
 
-const { getPresignedGetUrl } = require('../services/r2Service');
+const { getPresignedGetUrl, getReadStream } = require('../services/r2Service');
+const sharp = require('sharp');
 const UPLOADS_BASE = path.join(__dirname, '../uploads');
+
+const HEIC_RE = /\.hei[cf]$/i;
 
 // ── Pre-generate presigned URLs for all R2-backed files ──────────────────
 // Attaches `signedUrl` to each photo/document so the client can load
 // directly from R2 instead of following per-image 302 redirects.
+// HEIC files are excluded — they must go through the server proxy for conversion.
 async function attachSignedUrls(obj) {
   const TWO_HOURS = 7200;
   const sign = async (item) => {
-    if (item.r2Key && !item.driveFileId) {
+    if (item.r2Key && !item.driveFileId && !HEIC_RE.test(item.filename)) {
       try { item.signedUrl = await getPresignedGetUrl(item.r2Key, TWO_HOURS); } catch {}
     }
   };
@@ -278,7 +282,15 @@ router.get('/:id/photos/:filename', async (req, res) => {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       driveRes.data.pipe(res);
     } else if (photo.r2Key) {
-      // Serve from R2 via presigned redirect (pending / rejected)
+      // HEIC → convert to JPEG on the fly so Chrome/Android can display it
+      if (HEIC_RE.test(photo.filename)) {
+        const stream = await getReadStream(photo.r2Key);
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        stream.pipe(sharp().jpeg({ quality: 80 })).pipe(res);
+        return;
+      }
+      // Standard R2 redirect for non-HEIC
       const url = await getPresignedGetUrl(photo.r2Key, 7200);
       return res.redirect(302, url);
     } else {
@@ -310,6 +322,13 @@ router.get('/:id/documents/:filename', async (req, res) => {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       driveRes.data.pipe(res);
     } else if (doc.r2Key) {
+      if (HEIC_RE.test(doc.filename)) {
+        const stream = await getReadStream(doc.r2Key);
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        stream.pipe(sharp().jpeg({ quality: 80 })).pipe(res);
+        return;
+      }
       const url = await getPresignedGetUrl(doc.r2Key, 7200);
       return res.redirect(302, url);
     } else {
