@@ -21,9 +21,11 @@ export default function InspectionView() {
   const [isEditing, setIsEditing] = useState(false)
   const [editForm, setEditForm] = useState({})
   const [saving, setSaving] = useState(false)
+  const [vehicleTypes, setVehicleTypes] = useState([])
 
   useEffect(() => {
     load()
+    api.get('/vehicle-types').then((r) => setVehicleTypes(r.data)).catch(() => {})
   }, [id])
 
   async function load() {
@@ -40,9 +42,13 @@ export default function InspectionView() {
 
   function startEdit() {
     setEditForm({
+      vehicleType: inspection.vehicleType || '',
       notes: inspection.notes || '',
       location: inspection.location || '',
       vehicleHours: inspection.vehicleHours != null ? String(inspection.vehicleHours) : '',
+      vehicleHoursDigital: inspection.vehicleHoursDigital != null ? String(inspection.vehicleHoursDigital) : '',
+      vehicleHoursAnalog: inspection.vehicleHoursAnalog != null ? String(inspection.vehicleHoursAnalog) : '',
+      kilometers: inspection.kilometers != null ? String(inspection.kilometers) : '',
       securityCode: inspection.securityCode || '',
     })
     setIsEditing(true)
@@ -59,9 +65,13 @@ export default function InspectionView() {
     setError('')
     try {
       const r = await api.put(`/inspections/${id}/text`, {
+        vehicleType: editForm.vehicleType,
         notes: editForm.notes,
         location: editForm.location,
         vehicleHours: editForm.vehicleHours,
+        vehicleHoursDigital: editForm.vehicleHoursDigital,
+        vehicleHoursAnalog: editForm.vehicleHoursAnalog,
+        kilometers: editForm.kilometers,
         securityCode: editForm.securityCode,
       })
       setInspection(r.data)
@@ -201,67 +211,112 @@ export default function InspectionView() {
             <p className="font-bold text-blue-900 text-sm mb-1">עריכת פרטים</p>
 
             <div>
-              <label className="block text-xs font-bold text-gray-500 mb-1">מיקום</label>
-              <input
-                type="text"
-                value={editForm.location}
-                onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
-                placeholder="שם הבסיס / מיקום"
-                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none"
-              />
+              <label className="block text-xs font-bold text-gray-500 mb-1">סוג כלי</label>
+              <select
+                value={editForm.vehicleType}
+                onChange={(e) => setEditForm((f) => ({ ...f, vehicleType: e.target.value }))}
+                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none bg-white"
+              >
+                <option value="">בחר סוג כלי...</option>
+                {vehicleTypes.map((t) => (
+                  <option key={t._id} value={t.name}>{t.name}</option>
+                ))}
+              </select>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-gray-500 mb-1">שע״מ</label>
-              <input
-                type="number"
-                inputMode="numeric"
-                value={editForm.vehicleHours}
-                onChange={(e) => setEditForm((f) => ({ ...f, vehicleHours: e.target.value }))}
-                placeholder="שעות מנוע"
-                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none"
-              />
+              <label className="block text-xs font-bold text-gray-500 mb-1">מיקום</label>
+              <input type="text" value={editForm.location}
+                onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
+                placeholder="שם הבסיס / מיקום"
+                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none" />
             </div>
+
+            {/* Dynamic hours fields */}
+            {(() => {
+              const vt = editForm.vehicleType || ''
+              const isBager = vt.includes('באגר גלגלי') || vt.includes('באגר זחל')
+              const isRaizer = vt.includes('רייזר')
+              if (isBager) return (
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="block text-xs font-bold text-gray-500 mb-1">שע״מ דיגיטלי</label>
+                    <input type="number" inputMode="numeric" value={editForm.vehicleHoursDigital}
+                      onChange={(e) => setEditForm((f) => ({ ...f, vehicleHoursDigital: e.target.value }))}
+                      className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none" />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-xs font-bold text-gray-500 mb-1">שע״מ אנלוגי</label>
+                    <input type="number" inputMode="numeric" value={editForm.vehicleHoursAnalog}
+                      onChange={(e) => setEditForm((f) => ({ ...f, vehicleHoursAnalog: e.target.value }))}
+                      className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none" />
+                  </div>
+                </div>
+              )
+              return (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">שע״מ</label>
+                    <input type="number" inputMode="numeric" value={editForm.vehicleHours}
+                      onChange={(e) => setEditForm((f) => ({ ...f, vehicleHours: e.target.value }))}
+                      className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none" />
+                  </div>
+                  {isRaizer && (
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">ק״מ</label>
+                      <input type="number" inputMode="numeric" value={editForm.kilometers}
+                        onChange={(e) => setEditForm((f) => ({ ...f, kilometers: e.target.value }))}
+                        className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none" />
+                    </div>
+                  )}
+                </>
+              )
+            })()}
 
             <div>
               <label className="block text-xs font-bold text-gray-500 mb-1">קודן / קוד מיגון</label>
-              <input
-                type="text"
-                value={editForm.securityCode}
+              <input type="text" value={editForm.securityCode}
                 onChange={(e) => setEditForm((f) => ({ ...f, securityCode: e.target.value }))}
                 placeholder="קוד מיגון"
-                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none"
-              />
+                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none" />
             </div>
 
             <div>
               <label className="block text-xs font-bold text-gray-500 mb-1">הערות / תקלות</label>
-              <textarea
-                value={editForm.notes}
+              <textarea value={editForm.notes}
                 onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
-                rows={3}
-                placeholder="פרט תקלות, מצב הרכב..."
-                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none resize-none"
-              />
+                rows={3} placeholder="פרט תקלות, מצב הרכב..."
+                className="w-full border-2 border-gray-300 rounded-xl px-3 py-2 text-base focus:border-blue-900 outline-none resize-none" />
             </div>
 
             {error && <p className="text-red-600 text-sm">{error}</p>}
 
-            <button
-              onClick={saveText}
-              disabled={saving}
-              className="w-full py-3 bg-blue-900 text-white font-black rounded-xl disabled:opacity-50"
-            >
+            <button onClick={saveText} disabled={saving}
+              className="w-full py-3 bg-blue-900 text-white font-black rounded-xl disabled:opacity-50">
               {saving ? <Spinner size={4} /> : 'שמור שינויים'}
             </button>
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-2">
-            {inspection.members?.length > 0 && (
-              <Row label="צוות" value={inspection.members.join(', ')} />
-            )}
+            {inspection.members?.length > 0 && <Row label="צוות" value={inspection.members.join(', ')} />}
             {inspection.location && <Row label="מיקום" value={inspection.location} />}
-            {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
+            {(() => {
+              const vt = inspection.vehicleType || ''
+              const isBager = vt.includes('באגר גלגלי') || vt.includes('באגר זחל')
+              const isRaizer = vt.includes('רייזר')
+              if (isBager) return (
+                <>
+                  {inspection.vehicleHoursDigital != null && <Row label="שע״מ דיגיטלי" value={inspection.vehicleHoursDigital} />}
+                  {inspection.vehicleHoursAnalog != null && <Row label="שע״מ אנלוגי" value={inspection.vehicleHoursAnalog} />}
+                </>
+              )
+              return (
+                <>
+                  {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
+                  {isRaizer && inspection.kilometers != null && <Row label="ק״מ" value={inspection.kilometers} />}
+                </>
+              )
+            })()}
             {inspection.securityCode && <Row label="קודן" value={inspection.securityCode} />}
             {inspection.notes && <Row label="הערות" value={inspection.notes} />}
           </div>

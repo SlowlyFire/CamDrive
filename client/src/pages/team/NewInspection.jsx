@@ -80,6 +80,9 @@ export default function NewInspection() {
     type: 'enlistment',
     members: myName ? [myName] : [],
     vehicleHours: '',
+    vehicleHoursDigital: '',
+    vehicleHoursAnalog: '',
+    kilometers: '',
     location: '',
     notes: '',
     securityCode: '',
@@ -193,6 +196,9 @@ export default function NewInspection() {
       await api.post('/inspections', {
         ...form,
         vehicleHours: form.vehicleHours ? Number(form.vehicleHours) : null,
+        vehicleHoursDigital: form.vehicleHoursDigital ? Number(form.vehicleHoursDigital) : null,
+        vehicleHoursAnalog: form.vehicleHoursAnalog ? Number(form.vehicleHoursAnalog) : null,
+        kilometers: form.kilometers ? Number(form.kilometers) : null,
         photos: uploadedPhotos,
         documents: uploadedDocuments,
       })
@@ -237,13 +243,12 @@ export default function NewInspection() {
           </label>
           <input
             type="text"
-            inputMode="numeric"
             value={form.licensePlate}
             onChange={(e) => {
               setForm((f) => ({ ...f, licensePlate: e.target.value }))
               setFieldErrors((err) => ({ ...err, licensePlate: undefined }))
             }}
-            placeholder="למשל: 181398"
+            placeholder="למשל: 181398 או אביזר נלווה 181198"
             className={`w-full border-2 rounded-xl px-4 py-3 text-lg font-mono focus:outline-none ${
               fieldErrors.licensePlate ? 'border-red-500' : 'border-gray-300 focus:border-blue-900'
             }`}
@@ -316,18 +321,46 @@ export default function NewInspection() {
           </div>
         </div>
 
-        {/* Hours */}
-        <div>
-          <label className="block text-sm font-bold text-gray-700 mb-1">שע״מ</label>
-          <input
-            type="number"
-            inputMode="numeric"
-            value={form.vehicleHours}
-            onChange={(e) => setForm((f) => ({ ...f, vehicleHours: e.target.value }))}
-            placeholder="שעות מנוע"
-            className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-900 outline-none"
-          />
-        </div>
+        {/* Hours — dynamic based on vehicle type */}
+        {(() => {
+          const vt = form.vehicleType || ''
+          const isBager = vt.includes('באגר גלגלי') || vt.includes('באגר זחל')
+          const isRaizer = vt.includes('רייזר')
+          if (isBager) return (
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="block text-sm font-bold text-gray-700 mb-1">שע״מ דיגיטלי</label>
+                <input type="number" inputMode="numeric" value={form.vehicleHoursDigital}
+                  onChange={(e) => setForm((f) => ({ ...f, vehicleHoursDigital: e.target.value }))}
+                  placeholder="דיגיטלי" className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-900 outline-none" />
+              </div>
+              <div className="flex-1">
+                <label className="block text-sm font-bold text-gray-700 mb-1">שע״מ אנלוגי</label>
+                <input type="number" inputMode="numeric" value={form.vehicleHoursAnalog}
+                  onChange={(e) => setForm((f) => ({ ...f, vehicleHoursAnalog: e.target.value }))}
+                  placeholder="אנלוגי" className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-900 outline-none" />
+              </div>
+            </div>
+          )
+          return (
+            <>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">שע״מ</label>
+                <input type="number" inputMode="numeric" value={form.vehicleHours}
+                  onChange={(e) => setForm((f) => ({ ...f, vehicleHours: e.target.value }))}
+                  placeholder="שעות מנוע" className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-900 outline-none" />
+              </div>
+              {isRaizer && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">ק״מ</label>
+                  <input type="number" inputMode="numeric" value={form.kilometers}
+                    onChange={(e) => setForm((f) => ({ ...f, kilometers: e.target.value }))}
+                    placeholder="קילומטראז'" className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg focus:border-blue-900 outline-none" />
+                </div>
+              )}
+            </>
+          )
+        })()}
 
         {/* Location */}
         <div>

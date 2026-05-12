@@ -25,6 +25,9 @@ const inspectionSchema = new mongoose.Schema({
   members: { type: [String], default: [] },
   location: { type: String, trim: true, default: '' },
   vehicleHours: { type: Number, default: null },
+  vehicleHoursDigital: { type: Number, default: null },
+  vehicleHoursAnalog: { type: Number, default: null },
+  kilometers: { type: Number, default: null },
   notes: { type: String, default: '' },
   securityCode: { type: String, default: '' },
   status: {

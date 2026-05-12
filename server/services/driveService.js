@@ -1,6 +1,13 @@
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
+const { createCanvas, registerFont } = require('canvas');
+const { Readable } = require('stream');
+
+// Register Hebrew font for summary image generation
+try {
+  registerFont(path.join(__dirname, '../assets/fonts/Rubik-Regular.ttf'), { family: 'Rubik' });
+} catch { /* font may already be registered or file missing — fallback to system fonts */ }
 
 const DRIVE_ROOT_FOLDER_ID = process.env.DRIVE_ROOT_FOLDER_ID;
 const DRIVE_SECONDARY_FOLDER_ID = process.env.DRIVE_SECONDARY_FOLDER_ID;
@@ -419,6 +426,117 @@ async function processApproval(inspection, uploadsBaseDir) {
   });
 }
 
+// ── Summary image generation ──────────────────────────────────────────────
+// Generates a clean JPEG with all inspection text data (RTL Hebrew).
+// Uploaded to Drive alongside the photos so inspection details are always accessible.
+function getVehicleTypeMode(vt) {
+  if (!vt) return 'default';
+  if (vt.includes('באגר גלגלי') || vt.includes('באגר זחל')) return 'bager';
+  if (vt.includes('רייזר')) return 'raizer';
+  return 'default';
+}
+
+async function generateSummaryImage(inspection) {
+  const typeHeb = inspection.type === 'enlistment' ? 'גיוס' : 'שחרור';
+  const dateStr = new Date(inspection.createdAt).toLocaleString('he-IL', {
+    day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+
+  const rows = [];
+  rows.push({ label: 'מספר רישוי', value: inspection.licensePlate });
+  if (inspection.vehicleType) rows.push({ label: 'סוג כלי', value: inspection.vehicleType });
+  rows.push({ label: 'סוג בחינה', value: typeHeb });
+  if (inspection.members?.length) rows.push({ label: 'צוות', value: inspection.members.join(', ') });
+  if (inspection.location) rows.push({ label: 'מיקום', value: inspection.location });
+
+  const mode = getVehicleTypeMode(inspection.vehicleType);
+  if (mode === 'bager') {
+    if (inspection.vehicleHoursDigital != null) rows.push({ label: 'שע״מ דיגיטלי', value: String(inspection.vehicleHoursDigital) });
+    if (inspection.vehicleHoursAnalog != null) rows.push({ label: 'שע״מ אנלוגי', value: String(inspection.vehicleHoursAnalog) });
+  } else if (mode === 'raizer') {
+    if (inspection.vehicleHours != null) rows.push({ label: 'שע״מ', value: String(inspection.vehicleHours) });
+    if (inspection.kilometers != null) rows.push({ label: 'ק״מ', value: String(inspection.kilometers) });
+  } else {
+    if (inspection.vehicleHours != null) rows.push({ label: 'שע״מ', value: String(inspection.vehicleHours) });
+  }
+
+  if (inspection.securityCode) rows.push({ label: 'קודן', value: inspection.securityCode });
+  if (inspection.notes) rows.push({ label: 'הערות', value: inspection.notes });
+  rows.push({ label: 'תאריך', value: dateStr });
+  if (inspection.approvedBy) rows.push({ label: 'טופל ע״י', value: inspection.approvedBy });
+
+  // Canvas dimensions
+  const WIDTH = 800;
+  const PADDING = 40;
+  const LINE_HEIGHT = 44;
+  const TITLE_HEIGHT = 70;
+  const HEIGHT = TITLE_HEIGHT + PADDING + rows.length * LINE_HEIGHT + PADDING;
+
+  const canvas = createCanvas(WIDTH, HEIGHT);
+  const ctx = canvas.getContext('2d');
+
+  // White background
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  // Title
+  ctx.fillStyle = '#1E3A5F';
+  ctx.font = 'bold 32px Rubik, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`פרטי בחינה — ${typeHeb} ${inspection.licensePlate}`, WIDTH - PADDING, PADDING);
+
+  // Separator line
+  const sepY = PADDING + 48;
+  ctx.strokeStyle = '#D1D5DB';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(PADDING, sepY);
+  ctx.lineTo(WIDTH - PADDING, sepY);
+  ctx.stroke();
+
+  // Rows
+  let y = TITLE_HEIGHT + PADDING;
+  for (const { label, value } of rows) {
+    ctx.font = 'bold 22px Rubik, sans-serif';
+    ctx.fillStyle = '#6B7280';
+    ctx.fillText(label + ':', WIDTH - PADDING, y);
+
+    ctx.font = '22px Rubik, sans-serif';
+    ctx.fillStyle = '#111827';
+    // Truncate long values to fit
+    const maxValWidth = WIDTH - PADDING * 2 - 180;
+    let displayVal = value;
+    while (ctx.measureText(displayVal).width > maxValWidth && displayVal.length > 10) {
+      displayVal = displayVal.slice(0, -2) + '…';
+    }
+    ctx.fillText(displayVal, WIDTH - PADDING - 180, y);
+
+    y += LINE_HEIGHT;
+  }
+
+  return canvas.toBuffer('image/jpeg', { quality: 0.9 });
+}
+
+/**
+ * Upload summary image to a Drive folder as a JPEG.
+ * Returns the Drive file ID.
+ */
+async function uploadSummaryImage(inspection, folderId) {
+  const buffer = await generateSummaryImage(inspection);
+  const drive = getDriveClient();
+  const res = await drive.files.create({
+    supportsAllDrives: true,
+    requestBody: { name: 'פרטי_בחינה.jpg', parents: [folderId] },
+    media: {
+      mimeType: 'image/jpeg',
+      body: Readable.from(buffer),
+    },
+    fields: 'id',
+  });
+  return res.data.id;
+}
+
 module.exports = {
   getDriveClient,
   createFolder,
@@ -437,5 +555,6 @@ module.exports = {
   isReleaseFolder,
   formatDate,
   processApproval,
+  uploadSummaryImage,
   DRIVE_SECONDARY_FOLDER_ID,
 };

@@ -10,6 +10,7 @@ const { uploadLimiter } = require('../middleware/rateLimiters');
 const {
   prepareApprovalFolder,
   uploadPhotosBatch,
+  uploadSummaryImage,
   getDriveClient,
   createFolder,
   findOrCreateSubfolder,
@@ -172,7 +173,10 @@ router.post('/', requireTeamCode, uploadLimiter, async (req, res) => {
     const location     = sanitize(data.location     || '');
     const notes        = sanitize(data.notes        || '');
     const securityCode = sanitize(data.securityCode || '');
-    const vehicleHours = data.vehicleHours != null ? Number(data.vehicleHours) : null;
+    const vehicleHours        = data.vehicleHours != null && data.vehicleHours !== '' ? Number(data.vehicleHours) : null;
+    const vehicleHoursDigital = data.vehicleHoursDigital != null && data.vehicleHoursDigital !== '' ? Number(data.vehicleHoursDigital) : null;
+    const vehicleHoursAnalog  = data.vehicleHoursAnalog != null && data.vehicleHoursAnalog !== '' ? Number(data.vehicleHoursAnalog) : null;
+    const kilometers          = data.kilometers != null && data.kilometers !== '' ? Number(data.kilometers) : null;
     const rawMembers   = data.members;
     const members      = (Array.isArray(rawMembers) ? rawMembers : rawMembers ? [rawMembers] : [])
                            .map(sanitize)
@@ -180,7 +184,8 @@ router.post('/', requireTeamCode, uploadLimiter, async (req, res) => {
 
     const inspection = await Inspection.create({
       licensePlate, type, vehicleType, members,
-      location, vehicleHours, notes, securityCode,
+      location, vehicleHours, vehicleHoursDigital, vehicleHoursAnalog, kilometers,
+      notes, securityCode,
     });
 
     // Register R2-uploaded photos
@@ -515,15 +520,17 @@ router.put('/:id/text', requireTeamCode, async (req, res) => {
       return res.status(400).json({ error: 'ניתן לערוך רק בחינות ממתינות או שנדחו' });
     }
 
-    const { notes, location, vehicleHours, securityCode } = req.body;
+    const { notes, location, vehicleHours, vehicleHoursDigital, vehicleHoursAnalog, kilometers, securityCode, vehicleType } = req.body;
 
+    if (vehicleType !== undefined) inspection.vehicleType = sanitize(String(vehicleType || '')).slice(0, 100);
     if (location !== undefined) inspection.location = sanitize(String(location || '')).slice(0, 200);
     if (notes !== undefined) inspection.notes = sanitize(String(notes || '')).slice(0, 2000);
     if (securityCode !== undefined) inspection.securityCode = sanitize(String(securityCode || '')).slice(0, 50);
-    if (vehicleHours !== undefined) {
-      const h = vehicleHours === '' || vehicleHours === null ? null : Number(vehicleHours);
-      inspection.vehicleHours = (!isNaN(h) && h >= 0) ? h : inspection.vehicleHours;
-    }
+    const parseNum = (v) => { const n = v === '' || v == null ? null : Number(v); return (!isNaN(n) && n >= 0) ? n : null; };
+    if (vehicleHours !== undefined) inspection.vehicleHours = parseNum(vehicleHours);
+    if (vehicleHoursDigital !== undefined) inspection.vehicleHoursDigital = parseNum(vehicleHoursDigital);
+    if (vehicleHoursAnalog !== undefined) inspection.vehicleHoursAnalog = parseNum(vehicleHoursAnalog);
+    if (kilometers !== undefined) inspection.kilometers = parseNum(kilometers);
 
     await inspection.save();
     res.json(inspection);
@@ -654,6 +661,8 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
       inspection.failedUploads = [];
       inspection.approvedBy = req.manager?.managerName || req.body?.managerName || null;
       await inspection.save();
+      // Upload summary image to Drive (fire-and-forget — don't block approval)
+      uploadSummaryImage(inspection, folderId).catch((e) => console.error('Summary image failed:', e.message));
       deleteInspectionFiles(inspection._id);
     } else {
       inspection.status = 'partially_approved';
@@ -989,6 +998,7 @@ router.post('/:id/classify', requireAuth, async (req, res) => {
     inspection.approvedBy = req.manager?.managerName || req.body?.managerName || null;
     await inspection.save();
 
+    uploadSummaryImage(inspection, folderId).catch((e) => console.error('Summary image failed:', e.message));
     deleteInspectionFiles(inspection._id);
 
     res.json({ success: true, inspection, driveFolderName: folderName });

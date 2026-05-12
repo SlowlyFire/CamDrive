@@ -58,7 +58,23 @@ export default function Share() {
           {inspection.vehicleType && <Row label="סוג כלי" value={inspection.vehicleType} />}
           {inspection.members?.length > 0 && <Row label="צוות" value={inspection.members.join(', ')} />}
           {inspection.location && <Row label="מיקום" value={inspection.location} />}
-          {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
+          {(() => {
+            const vt = inspection.vehicleType || ''
+            const isBager = vt.includes('באגר גלגלי') || vt.includes('באגר זחל')
+            const isRaizer = vt.includes('רייזר')
+            if (isBager) return (
+              <>
+                {inspection.vehicleHoursDigital != null && <Row label="שע״מ דיגיטלי" value={inspection.vehicleHoursDigital} />}
+                {inspection.vehicleHoursAnalog != null && <Row label="שע״מ אנלוגי" value={inspection.vehicleHoursAnalog} />}
+              </>
+            )
+            return (
+              <>
+                {inspection.vehicleHours != null && <Row label="שע״מ" value={inspection.vehicleHours} />}
+                {isRaizer && inspection.kilometers != null && <Row label="ק״מ" value={inspection.kilometers} />}
+              </>
+            )
+          })()}
           {inspection.securityCode && <Row label="קודן" value={inspection.securityCode} />}
           {inspection.notes && <Row label="הערות" value={inspection.notes} />}
         </div>
