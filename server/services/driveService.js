@@ -1,13 +1,14 @@
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
-const { createCanvas, registerFont } = require('canvas');
+const sharp = require('sharp');
 const { Readable } = require('stream');
 
-// Register Hebrew font for summary image generation
-try {
-  registerFont(path.join(__dirname, '../assets/fonts/Rubik-Regular.ttf'), { family: 'Rubik' });
-} catch { /* font may already be registered or file missing — fallback to system fonts */ }
+// Load Hebrew font as base64 for embedding in SVG summary images
+const FONT_PATH = path.join(__dirname, '../assets/fonts/Rubik-Regular.ttf');
+const FONT_B64 = fs.existsSync(FONT_PATH)
+  ? fs.readFileSync(FONT_PATH).toString('base64')
+  : null;
 
 const DRIVE_ROOT_FOLDER_ID = process.env.DRIVE_ROOT_FOLDER_ID;
 const DRIVE_SECONDARY_FOLDER_ID = process.env.DRIVE_SECONDARY_FOLDER_ID;
@@ -427,13 +428,18 @@ async function processApproval(inspection, uploadsBaseDir) {
 }
 
 // ── Summary image generation ──────────────────────────────────────────────
-// Generates a clean JPEG with all inspection text data (RTL Hebrew).
+// Generates a clean JPEG via sharp + SVG with embedded Hebrew font.
 // Uploaded to Drive alongside the photos so inspection details are always accessible.
 function getVehicleTypeMode(vt) {
   if (!vt) return 'default';
   if (vt.includes('באגר גלגלי') || vt.includes('באגר זחל')) return 'bager';
   if (vt.includes('רייזר')) return 'raizer';
   return 'default';
+}
+
+function esc(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
 async function generateSummaryImage(inspection) {
@@ -461,61 +467,36 @@ async function generateSummaryImage(inspection) {
   }
 
   if (inspection.securityCode) rows.push({ label: 'קודן', value: inspection.securityCode });
-  if (inspection.notes) rows.push({ label: 'הערות', value: inspection.notes });
+  if (inspection.notes) rows.push({ label: 'הערות', value: String(inspection.notes).slice(0, 120) });
   rows.push({ label: 'תאריך', value: dateStr });
   if (inspection.approvedBy) rows.push({ label: 'טופל ע״י', value: inspection.approvedBy });
 
-  // Canvas dimensions
   const WIDTH = 800;
-  const PADDING = 40;
-  const LINE_HEIGHT = 44;
-  const TITLE_HEIGHT = 70;
-  const HEIGHT = TITLE_HEIGHT + PADDING + rows.length * LINE_HEIGHT + PADDING;
+  const PAD = 40;
+  const LH = 44;
+  const TITLE_H = 70;
+  const HEIGHT = TITLE_H + PAD + rows.length * LH + PAD;
 
-  const canvas = createCanvas(WIDTH, HEIGHT);
-  const ctx = canvas.getContext('2d');
+  const fontFace = FONT_B64
+    ? `@font-face { font-family: 'Rubik'; src: url('data:font/truetype;base64,${FONT_B64}') format('truetype'); }`
+    : '';
+  const fontFamily = FONT_B64 ? 'Rubik' : 'sans-serif';
 
-  // White background
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  const rowsSvg = rows.map(({ label, value }, i) => {
+    const y = TITLE_H + PAD + i * LH + 22;
+    return `<text x="${WIDTH - PAD}" y="${y}" font-size="22" font-weight="bold" fill="#6B7280" text-anchor="end" font-family="${fontFamily}">${esc(label)}:</text>
+            <text x="${WIDTH - PAD - 180}" y="${y}" font-size="22" fill="#111827" text-anchor="end" font-family="${fontFamily}">${esc(value)}</text>`;
+  }).join('\n');
 
-  // Title
-  ctx.fillStyle = '#1E3A5F';
-  ctx.font = 'bold 32px Rubik, sans-serif';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'top';
-  ctx.fillText(`פרטי בחינה — ${typeHeb} ${inspection.licensePlate}`, WIDTH - PADDING, PADDING);
+  const svg = `<svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg" direction="rtl">
+    <defs><style>${fontFace}</style></defs>
+    <rect width="100%" height="100%" fill="white"/>
+    <text x="${WIDTH - PAD}" y="${PAD + 32}" font-size="30" font-weight="bold" fill="#1E3A5F" text-anchor="end" font-family="${fontFamily}">פרטי בחינה — ${esc(typeHeb)} ${esc(inspection.licensePlate)}</text>
+    <line x1="${PAD}" y1="${PAD + 48}" x2="${WIDTH - PAD}" y2="${PAD + 48}" stroke="#D1D5DB" stroke-width="1"/>
+    ${rowsSvg}
+  </svg>`;
 
-  // Separator line
-  const sepY = PADDING + 48;
-  ctx.strokeStyle = '#D1D5DB';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(PADDING, sepY);
-  ctx.lineTo(WIDTH - PADDING, sepY);
-  ctx.stroke();
-
-  // Rows
-  let y = TITLE_HEIGHT + PADDING;
-  for (const { label, value } of rows) {
-    ctx.font = 'bold 22px Rubik, sans-serif';
-    ctx.fillStyle = '#6B7280';
-    ctx.fillText(label + ':', WIDTH - PADDING, y);
-
-    ctx.font = '22px Rubik, sans-serif';
-    ctx.fillStyle = '#111827';
-    // Truncate long values to fit
-    const maxValWidth = WIDTH - PADDING * 2 - 180;
-    let displayVal = value;
-    while (ctx.measureText(displayVal).width > maxValWidth && displayVal.length > 10) {
-      displayVal = displayVal.slice(0, -2) + '…';
-    }
-    ctx.fillText(displayVal, WIDTH - PADDING - 180, y);
-
-    y += LINE_HEIGHT;
-  }
-
-  return canvas.toBuffer('image/jpeg', { quality: 0.9 });
+  return sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
 }
 
 /**
