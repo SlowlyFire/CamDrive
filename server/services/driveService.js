@@ -4,12 +4,11 @@ const path = require('path');
 const sharp = require('sharp');
 const { Readable } = require('stream');
 
-// Load Hebrew font for satori text-to-SVG rendering (reads as ArrayBuffer)
+// Load Hebrew font for satori text-to-SVG rendering
+// Must be a STATIC font — satori cannot parse variable fonts (fvar table crash)
 const FONT_DATA = (() => {
-  const p = path.join(__dirname, '../assets/fonts/NotoSansHebrew-Regular.ttf');
+  const p = path.join(__dirname, '../assets/fonts/Rubik-Regular.ttf');
   if (fs.existsSync(p)) return fs.readFileSync(p);
-  const fallback = path.join(__dirname, '../assets/fonts/Rubik-Regular.ttf');
-  if (fs.existsSync(fallback)) return fs.readFileSync(fallback);
   return null;
 })();
 
@@ -481,7 +480,7 @@ async function generateSummaryImage(inspection) {
     props: {
       style: {
         display: 'flex', flexDirection: 'column', width: '800px', height: `${HEIGHT}px`,
-        padding: '40px', backgroundColor: 'white', fontFamily: 'Noto Sans Hebrew',
+        padding: '40px', backgroundColor: 'white', fontFamily: 'Rubik',
         direction: 'rtl',
       },
       children: [
@@ -517,7 +516,7 @@ async function generateSummaryImage(inspection) {
   const fonts = [];
   if (FONT_DATA) {
     const ab = FONT_DATA.buffer.slice(FONT_DATA.byteOffset, FONT_DATA.byteOffset + FONT_DATA.byteLength);
-    fonts.push({ name: 'Noto Sans Hebrew', data: ab, style: 'normal', weight: 400 });
+    fonts.push({ name: 'Rubik', data: ab, style: 'normal', weight: 400 });
   }
   console.log('[summary-image] Font loaded:', !!FONT_DATA, '| Rows:', rows.length);
 
