@@ -4,11 +4,14 @@ const path = require('path');
 const sharp = require('sharp');
 const { Readable } = require('stream');
 
-// Load Hebrew font as base64 for embedding in SVG summary images
-const FONT_PATH = path.join(__dirname, '../assets/fonts/Rubik-Regular.ttf');
-const FONT_B64 = fs.existsSync(FONT_PATH)
-  ? fs.readFileSync(FONT_PATH).toString('base64')
-  : null;
+// Load Hebrew font for satori text-to-SVG rendering (reads as ArrayBuffer)
+const FONT_DATA = (() => {
+  const p = path.join(__dirname, '../assets/fonts/NotoSansHebrew-Regular.ttf');
+  if (fs.existsSync(p)) return fs.readFileSync(p);
+  const fallback = path.join(__dirname, '../assets/fonts/Rubik-Regular.ttf');
+  if (fs.existsSync(fallback)) return fs.readFileSync(fallback);
+  return null;
+})();
 
 const DRIVE_ROOT_FOLDER_ID = process.env.DRIVE_ROOT_FOLDER_ID;
 const DRIVE_SECONDARY_FOLDER_ID = process.env.DRIVE_SECONDARY_FOLDER_ID;
@@ -428,8 +431,8 @@ async function processApproval(inspection, uploadsBaseDir) {
 }
 
 // ── Summary image generation ──────────────────────────────────────────────
-// Generates a clean JPEG via sharp + SVG with embedded Hebrew font.
-// Uploaded to Drive alongside the photos so inspection details are always accessible.
+// Uses satori to convert text to SVG paths (no system fonts needed),
+// then sharp to convert to JPEG.
 function getVehicleTypeMode(vt) {
   if (!vt) return 'default';
   if (vt.includes('באגר גלגלי') || vt.includes('באגר זחל')) return 'bager';
@@ -437,12 +440,9 @@ function getVehicleTypeMode(vt) {
   return 'default';
 }
 
-function esc(str) {
-  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
-
 async function generateSummaryImage(inspection) {
+  const satori = (await import('satori')).default;
+
   const typeHeb = inspection.type === 'enlistment' ? 'גיוס' : 'שחרור';
   const dateStr = new Date(inspection.createdAt).toLocaleString('he-IL', {
     day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit',
@@ -471,30 +471,51 @@ async function generateSummaryImage(inspection) {
   rows.push({ label: 'תאריך', value: dateStr });
   if (inspection.approvedBy) rows.push({ label: 'טופל ע״י', value: inspection.approvedBy });
 
-  const WIDTH = 800;
-  const PAD = 40;
-  const LH = 44;
-  const TITLE_H = 70;
-  const HEIGHT = TITLE_H + PAD + rows.length * LH + PAD;
+  const HEIGHT = 120 + rows.length * 44 + 40;
 
-  const fontFace = FONT_B64
-    ? `@font-face { font-family: 'Rubik'; src: url('data:font/truetype;base64,${FONT_B64}') format('truetype'); }`
-    : '';
-  const fontFamily = FONT_B64 ? 'Rubik' : 'sans-serif';
+  // Build the element tree (satori uses React-like plain objects)
+  const element = {
+    type: 'div',
+    props: {
+      style: {
+        display: 'flex', flexDirection: 'column', width: '800px', height: `${HEIGHT}px`,
+        padding: '40px', backgroundColor: 'white', fontFamily: 'Noto Sans Hebrew',
+        direction: 'rtl',
+      },
+      children: [
+        // Title
+        {
+          type: 'div',
+          props: {
+            style: { fontSize: '28px', fontWeight: 'bold', color: '#1E3A5F', marginBottom: '12px' },
+            children: `פרטי בחינה — ${typeHeb} ${inspection.licensePlate}`,
+          },
+        },
+        // Separator
+        {
+          type: 'div',
+          props: { style: { borderBottom: '1px solid #D1D5DB', marginBottom: '16px' } },
+        },
+        // Data rows
+        ...rows.map(({ label, value }) => ({
+          type: 'div',
+          props: {
+            style: { display: 'flex', gap: '12px', marginBottom: '10px', fontSize: '21px' },
+            children: [
+              { type: 'span', props: { style: { color: '#6B7280', fontWeight: 'bold', flexShrink: 0 }, children: label + ':' } },
+              { type: 'span', props: { style: { color: '#111827' }, children: String(value) } },
+            ],
+          },
+        })),
+      ],
+    },
+  };
 
-  const rowsSvg = rows.map(({ label, value }, i) => {
-    const y = TITLE_H + PAD + i * LH + 22;
-    return `<text x="${WIDTH - PAD}" y="${y}" font-size="22" font-weight="bold" fill="#6B7280" text-anchor="end" font-family="${fontFamily}">${esc(label)}:</text>
-            <text x="${WIDTH - PAD - 180}" y="${y}" font-size="22" fill="#111827" text-anchor="end" font-family="${fontFamily}">${esc(value)}</text>`;
-  }).join('\n');
-
-  const svg = `<svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg" direction="rtl">
-    <defs><style>${fontFace}</style></defs>
-    <rect width="100%" height="100%" fill="white"/>
-    <text x="${WIDTH - PAD}" y="${PAD + 32}" font-size="30" font-weight="bold" fill="#1E3A5F" text-anchor="end" font-family="${fontFamily}">פרטי בחינה — ${esc(typeHeb)} ${esc(inspection.licensePlate)}</text>
-    <line x1="${PAD}" y1="${PAD + 48}" x2="${WIDTH - PAD}" y2="${PAD + 48}" stroke="#D1D5DB" stroke-width="1"/>
-    ${rowsSvg}
-  </svg>`;
+  const svg = await satori(element, {
+    width: 800,
+    height: HEIGHT,
+    fonts: FONT_DATA ? [{ name: 'Noto Sans Hebrew', data: FONT_DATA, style: 'normal', weight: 400 }] : [],
+  });
 
   return sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
 }
