@@ -441,7 +441,9 @@ function getVehicleTypeMode(vt) {
 }
 
 async function generateSummaryImage(inspection) {
-  const satori = (await import('satori')).default;
+  console.log('[summary-image] Starting generation for', inspection.licensePlate);
+  const satoriModule = await import('satori');
+  const satori = satoriModule.default || satoriModule;
 
   const typeHeb = inspection.type === 'enlistment' ? 'גיוס' : 'שחרור';
   const dateStr = new Date(inspection.createdAt).toLocaleString('he-IL', {
@@ -511,13 +513,20 @@ async function generateSummaryImage(inspection) {
     },
   };
 
-  const svg = await satori(element, {
-    width: 800,
-    height: HEIGHT,
-    fonts: FONT_DATA ? [{ name: 'Noto Sans Hebrew', data: FONT_DATA, style: 'normal', weight: 400 }] : [],
-  });
+  // Satori expects fonts.data as ArrayBuffer
+  const fonts = [];
+  if (FONT_DATA) {
+    const ab = FONT_DATA.buffer.slice(FONT_DATA.byteOffset, FONT_DATA.byteOffset + FONT_DATA.byteLength);
+    fonts.push({ name: 'Noto Sans Hebrew', data: ab, style: 'normal', weight: 400 });
+  }
+  console.log('[summary-image] Font loaded:', !!FONT_DATA, '| Rows:', rows.length);
 
-  return sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
+  const svg = await satori(element, { width: 800, height: HEIGHT, fonts });
+  console.log('[summary-image] SVG generated, length:', svg.length);
+
+  const jpegBuffer = await sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
+  console.log('[summary-image] JPEG generated, size:', jpegBuffer.length);
+  return jpegBuffer;
 }
 
 /**
@@ -525,18 +534,24 @@ async function generateSummaryImage(inspection) {
  * Returns the Drive file ID.
  */
 async function uploadSummaryImage(inspection, folderId) {
-  const buffer = await generateSummaryImage(inspection);
-  const drive = getDriveClient();
-  const res = await drive.files.create({
-    supportsAllDrives: true,
-    requestBody: { name: 'פרטי_בחינה.jpg', parents: [folderId] },
-    media: {
-      mimeType: 'image/jpeg',
-      body: Readable.from(buffer),
-    },
-    fields: 'id',
-  });
-  return res.data.id;
+  try {
+    const buffer = await generateSummaryImage(inspection);
+    const drive = getDriveClient();
+    const res = await drive.files.create({
+      supportsAllDrives: true,
+      requestBody: { name: 'פרטי_בחינה.jpg', parents: [folderId] },
+      media: {
+        mimeType: 'image/jpeg',
+        body: Readable.from(buffer),
+      },
+      fields: 'id',
+    });
+    console.log('[summary-image] Uploaded to Drive, fileId:', res.data.id);
+    return res.data.id;
+  } catch (err) {
+    console.error('[summary-image] FULL ERROR:', err);
+    throw err;
+  }
 }
 
 module.exports = {

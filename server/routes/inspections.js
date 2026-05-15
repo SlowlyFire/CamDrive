@@ -662,7 +662,7 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
       inspection.approvedBy = req.manager?.managerName || req.body?.managerName || null;
       await inspection.save();
       // Upload summary image to Drive (fire-and-forget — don't block approval)
-      uploadSummaryImage(inspection, folderId).catch((e) => console.error('Summary image failed:', e.message));
+      uploadSummaryImage(inspection, folderId).catch((e) => console.error('[summary-image] Upload failed:', e.stack || e));
       deleteInspectionFiles(inspection._id);
     } else {
       inspection.status = 'partially_approved';
@@ -998,7 +998,7 @@ router.post('/:id/classify', requireAuth, async (req, res) => {
     inspection.approvedBy = req.manager?.managerName || req.body?.managerName || null;
     await inspection.save();
 
-    uploadSummaryImage(inspection, folderId).catch((e) => console.error('Summary image failed:', e.message));
+    uploadSummaryImage(inspection, folderId).catch((e) => console.error('[summary-image] Upload failed:', e.stack || e));
     deleteInspectionFiles(inspection._id);
 
     res.json({ success: true, inspection, driveFolderName: folderName });
