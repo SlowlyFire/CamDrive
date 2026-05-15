@@ -4,14 +4,6 @@ const path = require('path');
 const sharp = require('sharp');
 const { Readable } = require('stream');
 
-// Load Hebrew font for satori text-to-SVG rendering
-// Must be a STATIC font — satori cannot parse variable fonts (fvar table crash)
-const FONT_DATA = (() => {
-  const p = path.join(__dirname, '../assets/fonts/Rubik-Regular.ttf');
-  if (fs.existsSync(p)) return fs.readFileSync(p);
-  return null;
-})();
-
 const DRIVE_ROOT_FOLDER_ID = process.env.DRIVE_ROOT_FOLDER_ID;
 const DRIVE_SECONDARY_FOLDER_ID = process.env.DRIVE_SECONDARY_FOLDER_ID;
 
@@ -429,9 +421,9 @@ async function processApproval(inspection, uploadsBaseDir) {
   });
 }
 
-// ── Summary image generation ──────────────────────────────────────────────
-// Uses satori to convert text to SVG paths (no system fonts needed),
-// then sharp to convert to JPEG.
+// ── Summary text file generation ──────────────────────────────────────────
+// Generates a UTF-8 text file with all inspection details.
+// Uploaded to Drive alongside the photos so details are always accessible.
 function getVehicleTypeMode(vt) {
   if (!vt) return 'default';
   if (vt.includes('באגר גלגלי') || vt.includes('באגר זחל')) return 'bager';
@@ -439,11 +431,7 @@ function getVehicleTypeMode(vt) {
   return 'default';
 }
 
-async function generateSummaryImage(inspection) {
-  console.log('[summary-image] Starting generation for', inspection.licensePlate);
-  const satoriModule = await import('satori');
-  const satori = satoriModule.default || satoriModule;
-
+function generateSummaryText(inspection) {
   const typeHeb = inspection.type === 'enlistment' ? 'גיוס' : 'שחרור';
   const dateStr = new Date(inspection.createdAt).toLocaleString('he-IL', {
     day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit',
@@ -468,87 +456,40 @@ async function generateSummaryImage(inspection) {
   }
 
   if (inspection.securityCode) rows.push({ label: 'קודן', value: inspection.securityCode });
-  if (inspection.notes) rows.push({ label: 'הערות', value: String(inspection.notes).slice(0, 120) });
+  if (inspection.notes) rows.push({ label: 'הערות', value: inspection.notes });
   rows.push({ label: 'תאריך', value: dateStr });
   if (inspection.approvedBy) rows.push({ label: 'טופל ע״י', value: inspection.approvedBy });
 
-  const HEIGHT = 120 + rows.length * 44 + 40;
+  const sep = '═'.repeat(40);
+  const title = `פרטי בחינה — ${typeHeb} ${inspection.licensePlate}`;
+  const body = rows.map(({ label, value }) => `${label}: ${value}`).join('\n');
 
-  // Build the element tree (satori uses React-like plain objects)
-  const element = {
-    type: 'div',
-    props: {
-      style: {
-        display: 'flex', flexDirection: 'column', width: '800px', height: `${HEIGHT}px`,
-        padding: '40px', backgroundColor: 'white', fontFamily: 'Rubik',
-        direction: 'rtl',
-      },
-      children: [
-        // Title
-        {
-          type: 'div',
-          props: {
-            style: { fontSize: '28px', fontWeight: 'bold', color: '#1E3A5F', marginBottom: '12px' },
-            children: `פרטי בחינה — ${typeHeb} ${inspection.licensePlate}`,
-          },
-        },
-        // Separator
-        {
-          type: 'div',
-          props: { style: { borderBottom: '1px solid #D1D5DB', marginBottom: '16px' } },
-        },
-        // Data rows
-        ...rows.map(({ label, value }) => ({
-          type: 'div',
-          props: {
-            style: { display: 'flex', gap: '12px', marginBottom: '10px', fontSize: '21px' },
-            children: [
-              { type: 'span', props: { style: { color: '#6B7280', fontWeight: 'bold', flexShrink: 0 }, children: label + ':' } },
-              { type: 'span', props: { style: { color: '#111827' }, children: String(value) } },
-            ],
-          },
-        })),
-      ],
-    },
-  };
-
-  // Satori expects fonts.data as ArrayBuffer
-  const fonts = [];
-  if (FONT_DATA) {
-    const ab = FONT_DATA.buffer.slice(FONT_DATA.byteOffset, FONT_DATA.byteOffset + FONT_DATA.byteLength);
-    fonts.push({ name: 'Rubik', data: ab, style: 'normal', weight: 400 });
-  }
-  console.log('[summary-image] Font loaded:', !!FONT_DATA, '| Rows:', rows.length);
-
-  const svg = await satori(element, { width: 800, height: HEIGHT, fonts });
-  console.log('[summary-image] SVG generated, length:', svg.length);
-
-  const jpegBuffer = await sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
-  console.log('[summary-image] JPEG generated, size:', jpegBuffer.length);
-  return jpegBuffer;
+  // UTF-8 BOM for proper Hebrew display in Drive/Windows
+  return '\uFEFF' + `${sep}\n  ${title}\n${sep}\n\n${body}\n`;
 }
 
 /**
- * Upload summary image to a Drive folder as a JPEG.
+ * Upload summary text file to a Drive folder.
  * Returns the Drive file ID.
  */
 async function uploadSummaryImage(inspection, folderId) {
   try {
-    const buffer = await generateSummaryImage(inspection);
+    const text = generateSummaryText(inspection);
+    const buffer = Buffer.from(text, 'utf8');
     const drive = getDriveClient();
     const res = await drive.files.create({
       supportsAllDrives: true,
-      requestBody: { name: 'פרטי_בחינה.jpg', parents: [folderId] },
+      requestBody: { name: 'פרטי_בחינה.txt', parents: [folderId] },
       media: {
-        mimeType: 'image/jpeg',
+        mimeType: 'text/plain; charset=utf-8',
         body: Readable.from(buffer),
       },
       fields: 'id',
     });
-    console.log('[summary-image] Uploaded to Drive, fileId:', res.data.id);
+    console.log('[summary] Uploaded to Drive, fileId:', res.data.id);
     return res.data.id;
   } catch (err) {
-    console.error('[summary-image] FULL ERROR:', err);
+    console.error('[summary] Upload failed:', err.message);
     throw err;
   }
 }
