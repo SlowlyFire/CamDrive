@@ -42,6 +42,7 @@ export default function InspectionView() {
 
   function startEdit() {
     setEditForm({
+      type: inspection.type || 'enlistment',
       vehicleType: inspection.vehicleType || '',
       notes: inspection.notes || '',
       location: inspection.location || '',
@@ -65,6 +66,7 @@ export default function InspectionView() {
     setError('')
     try {
       const r = await api.put(`/inspections/${id}/text`, {
+        type: editForm.type,
         vehicleType: editForm.vehicleType,
         notes: editForm.notes,
         location: editForm.location,
@@ -209,6 +211,25 @@ export default function InspectionView() {
         {isEditing ? (
           <div className="bg-white rounded-xl border-2 border-blue-300 p-4 flex flex-col gap-3">
             <p className="font-bold text-blue-900 text-sm mb-1">עריכת פרטים</p>
+
+            {/* Type toggle */}
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1">סוג בחינה</label>
+              <div className="flex rounded-xl overflow-hidden border-2 border-blue-900">
+                {[['enlistment', 'גיוס'], ['release', 'שחרור']].map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setEditForm((f) => ({ ...f, type: val }))}
+                    className={`flex-1 py-2.5 text-base font-black transition-colors ${
+                      editForm.type === val ? 'bg-blue-900 text-white' : 'bg-white text-blue-900'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div>
               <label className="block text-xs font-bold text-gray-500 mb-1">סוג כלי</label>

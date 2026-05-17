@@ -520,8 +520,9 @@ router.put('/:id/text', requireTeamCode, async (req, res) => {
       return res.status(400).json({ error: 'ניתן לערוך רק בחינות ממתינות או שנדחו' });
     }
 
-    const { notes, location, vehicleHours, vehicleHoursDigital, vehicleHoursAnalog, kilometers, securityCode, vehicleType } = req.body;
+    const { type, notes, location, vehicleHours, vehicleHoursDigital, vehicleHoursAnalog, kilometers, securityCode, vehicleType } = req.body;
 
+    if (type !== undefined && ['enlistment', 'release'].includes(type)) inspection.type = type;
     if (vehicleType !== undefined) inspection.vehicleType = sanitize(String(vehicleType || '')).slice(0, 100);
     if (location !== undefined) inspection.location = sanitize(String(location || '')).slice(0, 200);
     if (notes !== undefined) inspection.notes = sanitize(String(notes || '')).slice(0, 2000);
