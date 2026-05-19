@@ -1,7 +1,6 @@
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
-const sharp = require('sharp');
 const { Readable } = require('stream');
 
 const DRIVE_ROOT_FOLDER_ID = process.env.DRIVE_ROOT_FOLDER_ID;
