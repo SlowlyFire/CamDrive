@@ -21,6 +21,9 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const isProd = process.env.NODE_ENV === 'production';
 
+// Railway runs behind a reverse proxy — trust it for correct IP detection
+app.set('trust proxy', 1);
+
 // Ensure the uploads directory exists at startup (Railway filesystem is
 // ephemeral — this directory is recreated on every deploy/restart).
 // NOTE: Pending-inspection photos stored here will be lost on redeploy.
