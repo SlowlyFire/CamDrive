@@ -222,12 +222,15 @@ export default function NewInspection() {
         <h2 className="text-2xl font-black text-gray-900">הבחינה נשלחה!</h2>
         <p className="text-gray-500">הבחינה ממתינה לאישור המנהל</p>
         {createdInspectionId && (
-          <button
-            onClick={() => navigate(`/team/inspection/${createdInspectionId}/form-1651`, { state: { formType: form.type } })}
-            className="w-full max-w-xs py-4 bg-green-700 text-white font-black text-xl rounded-xl"
-          >
-            מלא טופס 1651
-          </button>
+          <div className="w-full max-w-xs flex flex-col gap-2">
+            <p className="text-center text-xs font-bold text-gray-500 uppercase tracking-wide">שלב הבא (אופציונלי)</p>
+            <button
+              onClick={() => navigate(`/team/inspection/${createdInspectionId}/form-1651`, { state: { formType: form.type } })}
+              className="w-full py-4 bg-green-700 text-white font-black text-xl rounded-xl"
+            >
+              📋 מלא טופס 1651
+            </button>
+          </div>
         )}
         <button
           onClick={() => navigate('/team/menu')}
@@ -455,6 +458,15 @@ export default function NewInspection() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* Form 1651 hint — visible while filling the inspection */}
+        <div className="flex items-start gap-3 bg-green-50 border-2 border-green-200 rounded-xl p-3">
+          <span className="text-xl mt-0.5">📋</span>
+          <div>
+            <p className="text-sm font-black text-green-900">טופס בחינה 1651</p>
+            <p className="text-xs text-green-700 mt-0.5">לאחר שליחת הבחינה תוכל למלא את טופס הגיוס / השחרור 1651</p>
+          </div>
         </div>
 
         {fieldErrors.submit && <p className="text-red-600 text-sm font-semibold">{fieldErrors.submit}</p>}
