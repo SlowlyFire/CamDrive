@@ -36,14 +36,106 @@ export const SECTION_ITEMS = {
     'עמוד הגה',
     'זווית הגה',
   ],
+  hydraulicSystem: [
+    'גובה השמן במיכל ההידראולי',
+    'נזילות חיצוניות במערכת',
+    'בדיקת רעשים במערכת ההידראולית',
+    'בדיקת פעולות הידראוליות/הפעלה',
+  ],
+  brakes: [
+    'כושר עצירת כל צד בנפרד',
+    'נזילות חיצוניות',
+    'בדיקת בלם חום',
+    'מצב בלם יד',
+  ],
+  wheelSteering: [
+    'בדיקת חופשים במערכת היגוי',
+    'מצב בוכנות הגה',
+    'פין נעילה למערכת היגוי',
+  ],
+  trackSystem: [
+    'מצב הפלטות והשרשראות',
+    'מצב גלילונים/רוליקים',
+    'מצב גלגלי מתח/היידלר',
+    'מצב גלגלי הינע/ספרוקטיס',
+    'בדיקה ויזואלית למערכת הזחל',
+  ],
+  gearSystem: [
+    'בדיקת שמן תיבת הילוכים',
+    'תקינות פעולת תיבת ההילוכים',
+  ],
+  tires: [
+    'מצב צמיגים + חישוקים',
+  ],
+  workTest: [
+    'בדיקת הכלי בעבודה',
+    'התחממות מנוע',
+    'כושר נסיעה/עצירה בכביש',
+  ],
+  levels: [
+    'בדיקת מצב שולחן וסוכן',
+  ],
+  compactor: [
+    'עבודת המכבש בויברציה',
+    'בדיקת פעולת המדחס',
+    'דליפות אוויר בצנרת',
+    'דליפת אוויר מהמיכל ומהמערכות',
+    'תקינות מערכת רצועות',
+  ],
+  scarifier: [
+    'מערכת הידרוסטטית בהפעלת תוף',
+    'מערכת רצועות להפעלת תוף',
+    'משאבת שמן תוף',
+    'מנוע הידרוסטטי תוף',
+    'תוף מצב כללי/מסבים',
+    'אצבעות בתוף חסרים/שבורים',
+    'מיכל מים',
+    'משאבת מים',
+    'מערכת פיזור',
+    'צנרת מים',
+    'מספר גלילונים לא תקינים',
+    'מסוע עליון',
+    'מצב כללי סרט',
+    'מנוע מסוע עליון/תחתון',
+    'מבחן עבודה',
+    'נסיעה קדימה אחורה',
+    'סיבוב תוף אחורה/קדימה',
+    'הפעלת מערכת הקרצוף בעומס מלא',
+    'התקדמות בתיאום נסיעה/קרצוף',
+  ],
 }
 
 export const SECTION_LABELS = {
-  documents:      'מסמכים',
-  operatorCabin:  'תא מפעיל',
-  engineCheck:    'בדיקת מנוע',
-  steeringSystem: 'מערכת ההיגוי',
+  documents:       'מסמכים',
+  operatorCabin:   'תא מפעיל',
+  engineCheck:     'בדיקת מנוע',
+  steeringSystem:  'מערכת ההיגוי',
+  hydraulicSystem: 'מערכת ההידראולית',
+  brakes:          'בלמים',
+  wheelSteering:   'מערכת היגוי אופני',
+  trackSystem:     'מערכת הזחל',
+  gearSystem:      'מערכת הילוכים',
+  tires:           'צמיגים-אופני',
+  workTest:        'מבחן עבודה',
+  levels:          'מפלסות',
+  compactor:       'מכבש',
+  scarifier:       'מקרפפת',
 }
+
+export const FORM_PAGES = [
+  {
+    title: 'עמוד 1',
+    sections: ['documents', 'operatorCabin', 'engineCheck', 'steeringSystem', 'hydraulicSystem', 'brakes', 'wheelSteering', 'trackSystem', 'gearSystem'],
+  },
+  {
+    title: 'עמוד 2',
+    sections: ['tires', 'workTest', 'levels', 'compactor', 'scarifier'],
+  },
+  {
+    title: 'נזקים',
+    sections: [],
+  },
+]
 
 export const HEADER_FIELDS = [
   { key: 'serialNumber',            label: 'מספר רישוי' },
@@ -88,12 +180,17 @@ export function initFormData(formType) {
       yatzamPhone:             '',
     },
     fuelGauge: { liters: '', level: null },
-    sections: {
-      documents:      SECTION_ITEMS.documents.map((label) => ({ label, value: null })),
-      operatorCabin:  SECTION_ITEMS.operatorCabin.map((label) => ({ label, value: null })),
-      engineCheck:    SECTION_ITEMS.engineCheck.map((label) => ({ label, value: null })),
-      steeringSystem: SECTION_ITEMS.steeringSystem.map((label) => ({ label, value: null })),
-    },
+    sections: Object.fromEntries(
+      Object.entries(SECTION_ITEMS).map(([key, items]) => [
+        key,
+        items.map((label) => ({ label, value: null })),
+      ])
+    ),
+    damageTable: [
+      { location: '', description: '' },
+      { location: '', description: '' },
+      { location: '', description: '' },
+    ],
     status: 'draft',
   }
 }
