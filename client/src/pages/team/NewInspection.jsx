@@ -5,6 +5,7 @@ import TopBar from '../../components/TopBar'
 import PhotoUploader from '../../components/PhotoUploader'
 import Spinner from '../../components/Spinner'
 import { isVideoFile } from '../../utils/imageUtils'
+import { idbGetForm, idbSaveForm, idbDeleteForm } from '../../utils/inspectionFormIdb'
 
 function VideoPreview({ src, name }) {
   const [failed, setFailed] = useState(false)
@@ -94,6 +95,15 @@ export default function NewInspection() {
   const [uploadStatus, setUploadStatus] = useState('')
   const [done, setDone] = useState(false)
   const [createdInspectionId, setCreatedInspectionId] = useState(null)
+
+  // Stable draft key for form 1651 — persists across navigations within this session
+  const [draftKey] = useState(() => {
+    const existing = sessionStorage.getItem('form1651DraftKey')
+    if (existing) return existing
+    const key = `form1651-draft-${Date.now()}`
+    sessionStorage.setItem('form1651DraftKey', key)
+    return key
+  })
   const [fieldErrors, setFieldErrors] = useState({})
   const [lightbox, setLightbox] = useState(null) // { items: [{preview, file}], index }
   const [lbTouchStartX, setLbTouchStartX] = useState(null)
@@ -206,6 +216,15 @@ export default function NewInspection() {
 
       photos.forEach((p) => URL.revokeObjectURL(p.preview))
       documents.forEach((d) => URL.revokeObjectURL(d.preview))
+
+      // Migrate any form 1651 draft filled before submission to the real inspection ID
+      const draftEntry = await idbGetForm(draftKey)
+      if (draftEntry?.data) {
+        await idbSaveForm(newInspection._id, { ...draftEntry.data, formType: newInspection.type || form.type }, true)
+        await idbDeleteForm(draftKey)
+      }
+      sessionStorage.removeItem('form1651DraftKey')
+
       setCreatedInspectionId(newInspection._id)
       setDone(true)
     } catch (err) {
@@ -460,14 +479,16 @@ export default function NewInspection() {
           )}
         </div>
 
-        {/* Form 1651 hint — visible while filling the inspection */}
-        <div className="flex items-start gap-3 bg-green-50 border-2 border-green-200 rounded-xl p-3">
-          <span className="text-xl mt-0.5">📋</span>
-          <div>
-            <p className="text-sm font-black text-green-900">טופס בחינה 1651</p>
-            <p className="text-xs text-green-700 mt-0.5">לאחר שליחת הבחינה תוכל למלא את טופס הגיוס / השחרור 1651</p>
-          </div>
-        </div>
+        {/* Form 1651 — fill now, before photos */}
+        <button
+          type="button"
+          onClick={() => navigate('/team/new-form-1651', { state: { draftKey, formType: form.type } })}
+          className="w-full py-3 border-2 border-blue-900 text-blue-900 font-black text-lg rounded-xl bg-white flex items-center justify-center gap-2"
+        >
+          <span>📋</span>
+          <span>מלא טופס 1651</span>
+          <span className="text-xs font-normal text-blue-600">(אופציונלי)</span>
+        </button>
 
         {fieldErrors.submit && <p className="text-red-600 text-sm font-semibold">{fieldErrors.submit}</p>}
 

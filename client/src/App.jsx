@@ -40,6 +40,7 @@ export default function App() {
         <Route path="/team/inspection/:id" element={<RequireTeamCode><InspectionView /></RequireTeamCode>} />
         <Route path="/team/fuel-cards" element={<RequireTeamCode><FuelCards /></RequireTeamCode>} />
         <Route path="/team/inspection/:id/form-1651" element={<RequireTeamCode><InspectionForm1651 /></RequireTeamCode>} />
+        <Route path="/team/new-form-1651" element={<RequireTeamCode><InspectionForm1651 /></RequireTeamCode>} />
 
         {/* Admin */}
         <Route path="/admin/login" element={<Login />} />

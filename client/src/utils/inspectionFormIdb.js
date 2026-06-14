@@ -1,4 +1,4 @@
-import { get, set, createStore } from 'idb-keyval'
+import { get, set, del, createStore } from 'idb-keyval'
 
 const formStore = createStore('camdrive-forms', 'inspection-forms')
 
@@ -15,6 +15,14 @@ export async function idbGetForm(inspectionId) {
     return (await get(inspectionId, formStore)) || null
   } catch {
     return null
+  }
+}
+
+export async function idbDeleteForm(key) {
+  try {
+    await del(key, formStore)
+  } catch {
+    // silent
   }
 }
 

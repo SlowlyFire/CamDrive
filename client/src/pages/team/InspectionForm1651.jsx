@@ -6,7 +6,6 @@ import Spinner from '../../components/Spinner'
 import { idbSaveForm, idbGetForm, idbMarkSynced } from '../../utils/inspectionFormIdb'
 import {
   HEADER_FIELDS,
-  SECTION_ITEMS,
   SECTION_LABELS,
   initFormData,
 } from '../../utils/inspectionForm1651Data'
@@ -52,19 +51,28 @@ function normalizeServerData(serverData) {
 }
 
 export default function InspectionForm1651() {
-  const { id } = useParams()
+  const { id } = useParams()          // undefined on /team/new-form-1651
   const location = useLocation()
+
+  // Draft mode: no real inspectionId yet (user is still on NewInspection page)
+  const isDraft = !id
+  // In draft mode use the draftKey passed via navigation state (or session fallback)
+  const idbKey = isDraft
+    ? (location.state?.draftKey || sessionStorage.getItem('form1651DraftKey') || 'form1651-fallback')
+    : id
+  const backUrl = isDraft ? '/team/new' : `/team/inspection/${id}`
 
   const [loading, setLoading] = useState(true)
   const [formData, setFormData] = useState(null)
-  const [syncStatus, setSyncStatus] = useState('synced') // 'synced' | 'syncing' | 'offline'
+  // 'synced' | 'syncing' | 'offline' | 'draft'
+  const [syncStatus, setSyncStatus] = useState(isDraft ? 'draft' : 'synced')
 
   const syncTimer = useRef(null)
   const formDataRef = useRef(null)
   const isMounted = useRef(true)
 
   async function syncToServer(data) {
-    if (!isMounted.current) return
+    if (!isMounted.current || isDraft) return
     setSyncStatus('syncing')
     try {
       await api.patch(`/inspection-forms/${id}`, buildSyncPayload(data))
@@ -79,6 +87,19 @@ export default function InspectionForm1651() {
     isMounted.current = true
 
     async function load() {
+      if (isDraft) {
+        // Draft mode: IDB only, no server
+        const idbEntry = await idbGetForm(idbKey)
+        const ft = location.state?.formType || 'enlistment'
+        const resolved = idbEntry?.data || initFormData(ft)
+        setFormData(resolved)
+        formDataRef.current = resolved
+        setSyncStatus('draft')
+        setLoading(false)
+        return
+      }
+
+      // Normal mode: load from IDB + server, merge
       const [idbEntry, serverForm, inspectionType] = await Promise.all([
         idbGetForm(id),
         api.get(`/inspection-forms/${id}`).then((r) => r.data).catch(() => null),
@@ -125,7 +146,7 @@ export default function InspectionForm1651() {
     load()
 
     const handleOnline = () => {
-      if (formDataRef.current) syncToServer(formDataRef.current)
+      if (!isDraft && formDataRef.current) syncToServer(formDataRef.current)
     }
     window.addEventListener('online', handleOnline)
 
@@ -134,16 +155,17 @@ export default function InspectionForm1651() {
       window.removeEventListener('online', handleOnline)
       clearTimeout(syncTimer.current)
     }
-  }, [id])
+  }, [id, idbKey])
 
-  // Apply a state update, immediately save to IDB, and schedule a debounced server sync.
   function applyUpdate(updater) {
     setFormData((prev) => {
       const next = updater(prev)
       formDataRef.current = next
-      idbSaveForm(id, next, true)
-      clearTimeout(syncTimer.current)
-      syncTimer.current = setTimeout(() => syncToServer(next), 2000)
+      idbSaveForm(idbKey, next, !isDraft)
+      if (!isDraft) {
+        clearTimeout(syncTimer.current)
+        syncTimer.current = setTimeout(() => syncToServer(next), 2000)
+      }
       return next
     })
   }
@@ -168,7 +190,7 @@ export default function InspectionForm1651() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col" dir="rtl">
-        <TopBar title="טופס 1651" back={`/team/inspection/${id}`} />
+        <TopBar title="טופס 1651" back={backUrl} />
         <div className="flex justify-center py-16"><Spinner /></div>
       </div>
     )
@@ -177,7 +199,7 @@ export default function InspectionForm1651() {
   if (!formData) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col" dir="rtl">
-        <TopBar title="טופס 1651" back={`/team/inspection/${id}`} />
+        <TopBar title="טופס 1651" back={backUrl} />
         <p className="p-4 text-red-600">שגיאה בטעינת הטופס</p>
       </div>
     )
@@ -187,10 +209,11 @@ export default function InspectionForm1651() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col" dir="rtl">
-      <TopBar title={`טופס 1651 — ${typeLabel}`} back={`/team/inspection/${id}`} />
+      <TopBar title={`טופס 1651 — ${typeLabel}`} back={backUrl} />
 
       {/* Sync status bar */}
       <div className="flex items-center justify-end gap-1.5 px-4 py-1.5 text-xs font-semibold border-b border-gray-100 bg-white sticky top-[52px] z-10">
+        {syncStatus === 'draft'   && <><span className="w-2 h-2 rounded-full bg-gray-400 shrink-0" /><span className="text-gray-500">טיוטה — יסונכרן לאחר שליחת הבחינה</span></>}
         {syncStatus === 'synced'  && <><span className="w-2 h-2 rounded-full bg-green-500 shrink-0" /><span className="text-green-700">נשמר</span></>}
         {syncStatus === 'syncing' && <><span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" /><span className="text-blue-700">שומר...</span></>}
         {syncStatus === 'offline' && <><span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" /><span className="text-orange-700">נשמר במכשיר — יסונכרן כשיחזור חיבור</span></>}
@@ -251,7 +274,6 @@ export default function InspectionForm1651() {
         {/* ── Checklist sections ────────────────────────────────── */}
         {Object.entries(SECTION_LABELS).map(([sectionKey, sectionTitle]) => (
           <FormSection key={sectionKey} title={sectionTitle}>
-            {/* Column header */}
             <div className="flex items-center justify-between text-xs font-bold text-gray-400 pb-1 border-b border-gray-100">
               <div className="flex gap-1.5 shrink-0">
                 <span className="min-w-[68px] text-center">לא תקין</span>
@@ -291,7 +313,6 @@ function FormSection({ title, children }) {
 function ChecklistRow({ label, value, onChange }) {
   return (
     <div className="flex items-center gap-3 py-1.5 border-b border-gray-100 last:border-0">
-      {/* Label on the right (RTL start), buttons on the left (RTL end) */}
       <span className="flex-1 text-sm text-gray-800 leading-snug">{label}</span>
       <div className="flex gap-1.5 shrink-0">
         <button
