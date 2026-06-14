@@ -8,8 +8,10 @@ import {
   HEADER_FIELDS,
   SECTION_LABELS,
   FORM_PAGES,
+  SIGNATURE_BLOCKS,
   initFormData,
 } from '../../utils/inspectionForm1651Data'
+import SignaturePad from '../../components/SignaturePad'
 
 const FUEL_LEVELS = [
   { label: 'E',  value: 'E' },
@@ -53,6 +55,13 @@ function normalizeServerData(serverData) {
     damageTable: serverData.damageTable?.length > 0
       ? serverData.damageTable
       : defaults.damageTable,
+    signatures: (() => {
+      const out = {}
+      for (const key of Object.keys(defaults.signatures)) {
+        out[key] = { ...defaults.signatures[key], ...(serverData.signatures?.[key] || {}) }
+      }
+      return out
+    })(),
     status: serverData.status || 'draft',
   }
 }
@@ -89,11 +98,9 @@ export default function InspectionForm1651() {
 
   function goToPage(page) {
     setCurrentPage(page)
-    if (FORM_PAGES[page]?.sections?.length > 0) {
-      setExpandedSections(new Set([FORM_PAGES[page].sections[0]]))
-    } else {
-      setExpandedSections(new Set())
-    }
+    const pg = FORM_PAGES[page]
+    const first = pg?.sections?.[0] || pg?.defaultOpen
+    setExpandedSections(first ? new Set([first]) : new Set())
     window.scrollTo({ top: 0, behavior: 'instant' })
   }
 
@@ -235,6 +242,26 @@ export default function InspectionForm1651() {
     applyUpdate((prev) => ({
       ...prev,
       damageTable: (prev.damageTable || []).filter((_, i) => i !== index),
+    }))
+  }
+
+  function updateSignatureField(blockKey, fieldKey, value) {
+    applyUpdate((prev) => ({
+      ...prev,
+      signatures: {
+        ...prev.signatures,
+        [blockKey]: { ...prev.signatures[blockKey], [fieldKey]: value },
+      },
+    }))
+  }
+
+  function updateSignatureImage(blockKey, imageData) {
+    applyUpdate((prev) => ({
+      ...prev,
+      signatures: {
+        ...prev.signatures,
+        [blockKey]: { ...prev.signatures[blockKey], signatureImage: imageData },
+      },
     }))
   }
 
@@ -458,6 +485,64 @@ export default function InspectionForm1651() {
               </button>
             </div>
           </div>
+        )}
+
+        {/* ── Page 4: Signatures ──────────────────────────────────── */}
+        {currentPage === 3 && (
+          <>
+            {SIGNATURE_BLOCKS
+              .filter((block) => !block.formTypes || block.formTypes.includes(formData.formType))
+              .map((block) => (
+                <CollapsibleSection
+                  key={block.key}
+                  title={block.title}
+                  expanded={expandedSections.has(block.key)}
+                  onToggle={() => toggleSection(block.key)}
+                >
+                  {block.fields.map((field) => (
+                    field.type === 'toggle' ? (
+                      <div key={field.key}>
+                        <label className="block text-xs font-bold text-gray-500 mb-2">{field.label}</label>
+                        <div className="flex rounded-xl overflow-hidden border-2 border-gray-300">
+                          {[['כן', true], ['לא', false]].map(([label, val]) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => updateSignatureField(
+                                block.key, field.key,
+                                formData.signatures[block.key][field.key] === val ? null : val
+                              )}
+                              className={`flex-1 py-2.5 text-base font-black transition-colors ${
+                                formData.signatures[block.key][field.key] === val
+                                  ? 'bg-blue-900 text-white'
+                                  : 'bg-white text-gray-700'
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div key={field.key}>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">{field.label}</label>
+                        <input
+                          type={field.type || 'text'}
+                          value={formData.signatures[block.key][field.key] ?? ''}
+                          onChange={(e) => updateSignatureField(block.key, field.key, e.target.value)}
+                          className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-base focus:border-blue-900 outline-none bg-white"
+                        />
+                      </div>
+                    )
+                  ))}
+                  <SignaturePad
+                    value={formData.signatures[block.key].signatureImage}
+                    onChange={(img) => updateSignatureImage(block.key, img)}
+                  />
+                </CollapsibleSection>
+              ))
+            }
+          </>
         )}
 
         {/* Page navigation */}

@@ -135,6 +135,76 @@ export const FORM_PAGES = [
     title: 'נזקים',
     sections: [],
   },
+  {
+    title: 'חתימות',
+    sections: [],
+    defaultOpen: 'documenter',
+  },
+]
+
+export const SIGNATURE_BLOCKS = [
+  {
+    key: 'documenter',
+    title: 'פרטי המתעד',
+    fields: [
+      { key: 'fullName', label: 'שם מלא' },
+      { key: 'idNumber', label: "מס' אישי / ת.ז." },
+      { key: 'date',     label: 'תאריך', type: 'date' },
+      { key: 'notes',    label: 'הערות' },
+    ],
+  },
+  {
+    key: 'vehicleHandover',
+    title: 'פרטי מוסר הכלי',
+    fields: [
+      { key: 'fullName',          label: 'שם מלא' },
+      { key: 'idNumber',          label: 'ת.ז.' },
+      { key: 'date',              label: 'תאריך', type: 'date' },
+      { key: 'isRegisteredOwner', label: 'בעל הרכב רשום ברישיון?', type: 'toggle' },
+    ],
+  },
+  {
+    key: 'enlistmentClerk',
+    title: 'פרטי פקיד הגיוס',
+    formTypes: ['enlistment'],
+    fields: [
+      { key: 'fullName', label: 'שם מלא' },
+      { key: 'idNumber', label: "מס' אישי / ת.ז." },
+      { key: 'date',     label: 'תאריך', type: 'date' },
+      { key: 'notes',    label: 'הערות' },
+    ],
+  },
+  {
+    key: 'creditingClerk',
+    title: 'פרטי פקיד מזכה',
+    formTypes: ['release'],
+    fields: [
+      { key: 'fullName', label: 'שם מלא' },
+      { key: 'idNumber', label: "מס' אישי / ת.ז." },
+      { key: 'date',     label: 'תאריך', type: 'date' },
+      { key: 'notes',    label: 'הערות' },
+    ],
+  },
+  {
+    key: 'regularUnitRep',
+    title: 'פרטי נציג יחידת סדיר',
+    fields: [
+      { key: 'fullName', label: 'שם מלא' },
+      { key: 'idNumber', label: "מס' אישי / ת.ז." },
+      { key: 'date',     label: 'תאריך', type: 'date' },
+      { key: 'notes',    label: 'הערות' },
+    ],
+  },
+  {
+    key: 'vehiclePresence',
+    title: 'אישור התייצבות הכלי לצה"ל בתרגיל',
+    fields: [
+      { key: 'licensePlate',  label: "מס' רישוי" },
+      { key: 'date',          label: 'תאריך', type: 'date' },
+      { key: 'clerkIdNumber', label: "פקיד הגיוס — מס' אישי" },
+      { key: 'clerkFullName', label: 'פקיד הגיוס — שם מלא' },
+    ],
+  },
 ]
 
 export const HEADER_FIELDS = [
@@ -191,6 +261,14 @@ export function initFormData(formType) {
       { location: '', description: '' },
       { location: '', description: '' },
     ],
+    signatures: {
+      documenter:      { fullName: '', idNumber: '', date: '', notes: '', signatureImage: null },
+      vehicleHandover: { fullName: '', idNumber: '', date: '', isRegisteredOwner: null, signatureImage: null },
+      enlistmentClerk: { fullName: '', idNumber: '', date: '', notes: '', signatureImage: null },
+      creditingClerk:  { fullName: '', idNumber: '', date: '', notes: '', signatureImage: null },
+      regularUnitRep:  { fullName: '', idNumber: '', date: '', notes: '', signatureImage: null },
+      vehiclePresence: { licensePlate: '', date: '', clerkIdNumber: '', clerkFullName: '', signatureImage: null },
+    },
     status: 'draft',
   }
 }

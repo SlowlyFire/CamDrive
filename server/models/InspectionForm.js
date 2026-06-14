@@ -5,6 +5,18 @@ const itemSchema = new mongoose.Schema({
   value: { type: String, enum: ['ok', 'not_ok', null], default: null },
 }, { _id: false });
 
+const signatureBlockSchema = new mongoose.Schema({
+  fullName:          { type: String, default: '' },
+  idNumber:          { type: String, default: '' },
+  date:              { type: String, default: '' },
+  notes:             { type: String, default: '' },
+  isRegisteredOwner: { type: Boolean, default: null },
+  licensePlate:      { type: String, default: '' },
+  clerkIdNumber:     { type: String, default: '' },
+  clerkFullName:     { type: String, default: '' },
+  signatureImage:    { type: String, default: null },
+}, { _id: false })
+
 const damageRowSchema = new mongoose.Schema({
   location:    { type: String, default: '' },
   description: { type: String, default: '' },
@@ -58,6 +70,14 @@ const inspectionFormSchema = new mongoose.Schema({
     scarifier:       { type: [itemSchema], default: [] },
   },
   damageTable: { type: [damageRowSchema], default: [] },
+  signatures: {
+    documenter:      { type: signatureBlockSchema, default: () => ({}) },
+    vehicleHandover: { type: signatureBlockSchema, default: () => ({}) },
+    enlistmentClerk: { type: signatureBlockSchema, default: () => ({}) },
+    creditingClerk:  { type: signatureBlockSchema, default: () => ({}) },
+    regularUnitRep:  { type: signatureBlockSchema, default: () => ({}) },
+    vehiclePresence: { type: signatureBlockSchema, default: () => ({}) },
+  },
   status:      { type: String, enum: ['draft', 'submitted'], default: 'draft' },
   lastSavedAt: { type: Date, default: null },
 });
