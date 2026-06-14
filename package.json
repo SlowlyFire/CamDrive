@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "CamDrive — vehicle inspection PWA",
   "scripts": {
-    "build": "npm install --prefix server && npm install --prefix client && npm run build --prefix client",
+    "build": "npm install --prefix server && npm install --include=dev --prefix client && npm run build --prefix client",
     "start": "node server/index.js",
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client"
