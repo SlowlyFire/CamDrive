@@ -66,6 +66,7 @@ export default function InspectionForm1651() {
   const [formData, setFormData] = useState(null)
   // 'synced' | 'syncing' | 'offline' | 'draft'
   const [syncStatus, setSyncStatus] = useState(isDraft ? 'draft' : 'synced')
+  const [vehicleTypes, setVehicleTypes] = useState([])
 
   const syncTimer = useRef(null)
   const formDataRef = useRef(null)
@@ -82,6 +83,10 @@ export default function InspectionForm1651() {
       if (isMounted.current) setSyncStatus('offline')
     }
   }
+
+  useEffect(() => {
+    api.get('/vehicle-types').then((r) => setVehicleTypes(r.data)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     isMounted.current = true
@@ -226,13 +231,26 @@ export default function InspectionForm1651() {
           {HEADER_FIELDS.map(({ key, label, type }) => (
             <div key={key}>
               <label className="block text-xs font-bold text-gray-500 mb-1">{label}</label>
-              <input
-                type={type || 'text'}
-                inputMode={type === 'number' ? 'numeric' : type === 'tel' ? 'tel' : undefined}
-                value={formData.header[key] ?? ''}
-                onChange={(e) => updateHeader(key, e.target.value)}
-                className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-base focus:border-blue-900 outline-none bg-white"
-              />
+              {key === 'vehicleType' ? (
+                <select
+                  value={formData.header.vehicleType ?? ''}
+                  onChange={(e) => updateHeader('vehicleType', e.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-base focus:border-blue-900 outline-none bg-white"
+                >
+                  <option value="">בחר סוג כלי...</option>
+                  {vehicleTypes.map((t) => (
+                    <option key={t._id} value={t.name}>{t.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type={type || 'text'}
+                  inputMode={type === 'number' ? 'numeric' : type === 'tel' ? 'tel' : undefined}
+                  value={formData.header[key] ?? ''}
+                  onChange={(e) => updateHeader(key, e.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-base focus:border-blue-900 outline-none bg-white"
+                />
+              )}
             </div>
           ))}
         </FormSection>

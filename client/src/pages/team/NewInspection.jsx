@@ -6,6 +6,8 @@ import PhotoUploader from '../../components/PhotoUploader'
 import Spinner from '../../components/Spinner'
 import { isVideoFile } from '../../utils/imageUtils'
 import { idbGetForm, idbSaveForm, idbDeleteForm } from '../../utils/inspectionFormIdb'
+import { saveDraft, loadDraft, clearDraft } from '../../utils/newInspectionDraft'
+import { initFormData } from '../../utils/inspectionForm1651Data'
 
 function VideoPreview({ src, name }) {
   const [failed, setFailed] = useState(false)
@@ -111,6 +113,33 @@ export default function NewInspection() {
   useEffect(() => {
     api.get('/people').then((r) => setPeople(r.data))
     api.get('/vehicle-types').then((r) => setVehicleTypes(r.data)).catch(() => {})
+
+    // Restore draft when returning from form 1651
+    const { form: savedForm, photos: savedPhotos, documents: savedDocs } = loadDraft()
+    if (savedForm) {
+      setForm(savedForm)
+      setPhotos(savedPhotos)
+      setDocuments(savedDocs)
+
+      // Sync shared fields back from 1651 IDB (user may have edited them there)
+      const key = sessionStorage.getItem('form1651DraftKey')
+      if (key) {
+        idbGetForm(key).then((entry) => {
+          if (!entry?.data?.header) return
+          const h = entry.data.header
+          const ft = entry.data.formType || 'enlistment'
+          const locationVal = ft === 'enlistment' ? h.enlistmentSiteName : h.releaseSiteName
+          setForm((f) => ({
+            ...f,
+            ...(h.serialNumber       ? { licensePlate: h.serialNumber }        : {}),
+            ...(h.vehicleType        ? { vehicleType:  h.vehicleType }          : {}),
+            ...(h.engineHours        ? { vehicleHours: String(h.engineHours) }  : {}),
+            ...(h.securitySystemCode ? { securityCode: h.securitySystemCode }   : {}),
+            ...(locationVal          ? { location: locationVal }                : {}),
+          }))
+        })
+      }
+    }
   }, [])
 
   function toggleMember(name) {
@@ -149,6 +178,28 @@ export default function NewInspection() {
       URL.revokeObjectURL(d[index].preview)
       return d.filter((_, i) => i !== index)
     })
+  }
+
+  async function handleOpenForm1651() {
+    saveDraft(form, photos, documents)
+
+    const idbEntry = await idbGetForm(draftKey)
+    const ft = form.type || 'enlistment'
+    const existing = idbEntry?.data || initFormData(ft)
+    const locationField = ft === 'enlistment' ? 'enlistmentSiteName' : 'releaseSiteName'
+
+    const updatedHeader = {
+      ...existing.header,
+      ...(form.licensePlate ? { serialNumber:       form.licensePlate }  : {}),
+      ...(form.vehicleType  ? { vehicleType:        form.vehicleType }   : {}),
+      ...((form.vehicleHours || form.vehicleHoursDigital)
+        ? { engineHours: form.vehicleHours || form.vehicleHoursDigital } : {}),
+      ...(form.securityCode ? { securitySystemCode: form.securityCode }  : {}),
+      ...(form.location     ? { [locationField]:    form.location }      : {}),
+    }
+
+    await idbSaveForm(draftKey, { ...existing, header: updatedHeader, formType: ft }, false)
+    navigate('/team/new-form-1651', { state: { draftKey, formType: form.type } })
   }
 
   async function submit(e) {
@@ -225,6 +276,7 @@ export default function NewInspection() {
       }
       sessionStorage.removeItem('form1651DraftKey')
 
+      clearDraft()
       setCreatedInspectionId(newInspection._id)
       setDone(true)
     } catch (err) {
@@ -430,6 +482,17 @@ export default function NewInspection() {
           />
         </div>
 
+        {/* Form 1651 */}
+        <button
+          type="button"
+          onClick={handleOpenForm1651}
+          className="w-full py-3 border-2 border-blue-900 text-blue-900 font-black text-lg rounded-xl bg-white flex items-center justify-center gap-2"
+        >
+          <span>📋</span>
+          <span>מלא טופס 1651</span>
+          <span className="text-xs font-normal text-blue-600">(אופציונלי)</span>
+        </button>
+
         {/* Documents */}
         <div>
           <label className="block text-sm font-bold text-gray-700 mb-2">מסמכים וטפסים ({documents.length})</label>
@@ -478,17 +541,6 @@ export default function NewInspection() {
             </div>
           )}
         </div>
-
-        {/* Form 1651 — fill now, before photos */}
-        <button
-          type="button"
-          onClick={() => navigate('/team/new-form-1651', { state: { draftKey, formType: form.type } })}
-          className="w-full py-3 border-2 border-blue-900 text-blue-900 font-black text-lg rounded-xl bg-white flex items-center justify-center gap-2"
-        >
-          <span>📋</span>
-          <span>מלא טופס 1651</span>
-          <span className="text-xs font-normal text-blue-600">(אופציונלי)</span>
-        </button>
 
         {fieldErrors.submit && <p className="text-red-600 text-sm font-semibold">{fieldErrors.submit}</p>}
 

@@ -46,7 +46,7 @@ export const SECTION_LABELS = {
 }
 
 export const HEADER_FIELDS = [
-  { key: 'serialNumber',            label: 'מס"ד' },
+  { key: 'serialNumber',            label: 'מספר רישוי' },
   { key: 'enlistmentDate',          label: 'תאריך גיוס',           type: 'date' },
   { key: 'time',                    label: 'שעה',                  type: 'time' },
   { key: 'internalNumber',          label: "מס' פנימי" },
