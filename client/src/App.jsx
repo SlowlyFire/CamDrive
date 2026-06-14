@@ -13,6 +13,7 @@ import VehicleHistory from './pages/admin/VehicleHistory'
 import Share from './pages/Share'
 import FuelShare from './pages/FuelShare'
 import FuelCards from './pages/team/FuelCards'
+import InspectionForm1651 from './pages/team/InspectionForm1651'
 
 function RequireAuth({ children }) {
   const token = localStorage.getItem('adminToken')
@@ -38,6 +39,7 @@ export default function App() {
         <Route path="/team/pending" element={<RequireTeamCode><PendingInspections /></RequireTeamCode>} />
         <Route path="/team/inspection/:id" element={<RequireTeamCode><InspectionView /></RequireTeamCode>} />
         <Route path="/team/fuel-cards" element={<RequireTeamCode><FuelCards /></RequireTeamCode>} />
+        <Route path="/team/inspection/:id/form-1651" element={<RequireTeamCode><InspectionForm1651 /></RequireTeamCode>} />
 
         {/* Admin */}
         <Route path="/admin/login" element={<Login />} />

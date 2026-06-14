@@ -93,6 +93,7 @@ export default function NewInspection() {
   const [progress, setProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
   const [done, setDone] = useState(false)
+  const [createdInspectionId, setCreatedInspectionId] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
   const [lightbox, setLightbox] = useState(null) // { items: [{preview, file}], index }
   const [lbTouchStartX, setLbTouchStartX] = useState(null)
@@ -193,7 +194,7 @@ export default function NewInspection() {
       setUploadStatus('שולח בחינה…')
 
       // POST metadata (JSON — no files, all already in R2)
-      await api.post('/inspections', {
+      const { data: newInspection } = await api.post('/inspections', {
         ...form,
         vehicleHours: form.vehicleHours ? Number(form.vehicleHours) : null,
         vehicleHoursDigital: form.vehicleHoursDigital ? Number(form.vehicleHoursDigital) : null,
@@ -205,6 +206,7 @@ export default function NewInspection() {
 
       photos.forEach((p) => URL.revokeObjectURL(p.preview))
       documents.forEach((d) => URL.revokeObjectURL(d.preview))
+      setCreatedInspectionId(newInspection._id)
       setDone(true)
     } catch (err) {
       setFieldErrors({ submit: err.response?.data?.error || err.message || 'שגיאה בשליחה' })
@@ -219,6 +221,14 @@ export default function NewInspection() {
         <div className="text-6xl">✅</div>
         <h2 className="text-2xl font-black text-gray-900">הבחינה נשלחה!</h2>
         <p className="text-gray-500">הבחינה ממתינה לאישור המנהל</p>
+        {createdInspectionId && (
+          <button
+            onClick={() => navigate(`/team/inspection/${createdInspectionId}/form-1651`, { state: { formType: form.type } })}
+            className="w-full max-w-xs py-4 bg-green-700 text-white font-black text-xl rounded-xl"
+          >
+            מלא טופס 1651
+          </button>
+        )}
         <button
           onClick={() => navigate('/team/menu')}
           className="w-full max-w-xs py-4 bg-blue-900 text-white font-black text-xl rounded-xl"

@@ -388,6 +388,16 @@ export default function InspectionView() {
           )}
         </div>
 
+        {/* Form 1651 button */}
+        {isEditable && (
+          <button
+            onClick={() => navigate(`/team/inspection/${id}/form-1651`, { state: { formType: inspection.type } })}
+            className="w-full py-3 border-2 border-blue-900 text-blue-900 font-black text-lg rounded-xl bg-white"
+          >
+            מלא טופס 1651
+          </button>
+        )}
+
         {/* Resubmit button for rejected inspections */}
         {isRejected && (
           <button
