@@ -18,7 +18,7 @@ const {
 } = require('../services/driveService');
 const router = express.Router();
 
-const { getPresignedGetUrl } = require('../services/r2Service');
+const { getPresignedGetUrl, getReadStream } = require('../services/r2Service');
 const UPLOADS_BASE = path.join(__dirname, '../uploads');
 
 // ── Pre-generate presigned URLs for all R2-backed files ──────────────────
@@ -808,16 +808,26 @@ router.get('/:id/download-failed-zip', requireAuth, async (req, res) => {
     const inspDir = path.join(UPLOADS_BASE, inspection._id.toString());
     for (const photo of failedPhotos) {
       const archiveName = photo.originalName || photo.filename;
-      const filePath = path.join(inspDir, photo.filename);
-      if (fs.existsSync(filePath)) {
-        archive.file(filePath, { name: `תמונות/${archiveName}` });
+      if (photo.r2Key) {
+        const stream = await getReadStream(photo.r2Key);
+        archive.append(stream, { name: `תמונות/${archiveName}` });
+      } else {
+        const filePath = path.join(inspDir, photo.filename);
+        if (fs.existsSync(filePath)) {
+          archive.file(filePath, { name: `תמונות/${archiveName}` });
+        }
       }
     }
     for (const doc of failedDocs) {
       const archiveName = doc.originalName || doc.filename;
-      const filePath = path.join(inspDir, doc.filename);
-      if (fs.existsSync(filePath)) {
-        archive.file(filePath, { name: `מסמכים/${archiveName}` });
+      if (doc.r2Key) {
+        const stream = await getReadStream(doc.r2Key);
+        archive.append(stream, { name: `מסמכים/${archiveName}` });
+      } else {
+        const filePath = path.join(inspDir, doc.filename);
+        if (fs.existsSync(filePath)) {
+          archive.file(filePath, { name: `מסמכים/${archiveName}` });
+        }
       }
     }
 
@@ -869,10 +879,14 @@ router.get('/:id/download-zip', async (req, res) => {
     const drive = getDriveClient();
     const inspDir = path.join(UPLOADS_BASE, inspection._id.toString());
 
-    // All files flat in the ZIP (no subfolders)
+    // All files flat in the ZIP (no subfolders).
+    // Priority: R2 (pending files) → Drive (approved files) → local disk (legacy fallback)
     for (const photo of inspection.photos) {
       const archiveName = photo.originalName || photo.filename;
-      if (photo.driveFileId) {
+      if (photo.r2Key) {
+        const stream = await getReadStream(photo.r2Key);
+        archive.append(stream, { name: archiveName });
+      } else if (photo.driveFileId) {
         const streamRes = await drive.files.get(
           { fileId: photo.driveFileId, alt: 'media' },
           { responseType: 'stream' }
@@ -888,7 +902,10 @@ router.get('/:id/download-zip', async (req, res) => {
 
     for (const doc of (inspection.documents || [])) {
       const archiveName = doc.originalName || doc.filename;
-      if (doc.driveFileId) {
+      if (doc.r2Key) {
+        const stream = await getReadStream(doc.r2Key);
+        archive.append(stream, { name: archiveName });
+      } else if (doc.driveFileId) {
         const streamRes = await drive.files.get(
           { fileId: doc.driveFileId, alt: 'media' },
           { responseType: 'stream' }
