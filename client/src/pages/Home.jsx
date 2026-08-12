@@ -18,7 +18,7 @@ export default function Home() {
       <div className="text-center mb-4">
         <h1 className="text-white text-4xl font-black tracking-tight">CamDrive</h1>
         <p className="text-blue-300 text-md mt-1">מערכת בחינות כלי צמ״ה</p>
-        <p className="text-blue-300 text-sm mt-1">ערן, תביא בגד ים ערןןןן</p>
+        <p className="text-blue-300 text-sm mt-1">יצ״מ מרכז אימפריה</p>
       </div>
 
       <button
